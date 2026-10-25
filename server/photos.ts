@@ -57,8 +57,10 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
       const info = Bun.file(path)
       if (!(await info.exists())) throw new HttpError(404)
       // The URL carries ?v=<version>, so a changed photo gets a new URL.
-      const { response } = fileResponse(req, path, `${photo.id}.webp`, info.size, false, { "cache-control": "private, max-age=31536000, immutable" })
+      const { response } = fileResponse(req, path, `${photo.id}.webp`, info.size, false)
+      // The browser may keep a preview, but only for this sign-in: logout clears it.
       response.headers.set("cache-control", "private, max-age=31536000, immutable")
+      response.headers.set("vary", "Cookie")
       return response
     }
     const rel = part === "original" ? photo.path : part === "live" ? photo.live_path : null

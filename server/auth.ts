@@ -1,4 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
+import { mkdirSync } from "node:fs"
+import { join } from "node:path"
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -40,6 +42,7 @@ export function createInvite(config: Config, db: Db, userId: string, name: strin
   if (!USER_ID.test(userId)) throw new Error("user id must be a lowercase slug")
   const now = Date.now()
   db.query("insert into users (id, name, created_at) values (?, ?, ?) on conflict(id) do nothing").run(userId, name || userId, now)
+  mkdirSync(join(config.library, userId), { recursive: true })
   const token = randomBytes(32).toString("base64url")
   db.query("insert into invites (token_hash, user_id, created_at, expires_at) values (?, ?, ?, ?)").run(sha256(token), userId, now, now + INVITE_DAYS * 86_400_000)
   return `${config.origin}/?invite=${token}`
@@ -127,7 +130,8 @@ export function createAuth(config: Config, db: Db) {
     if (path === "/api/auth/logout") {
       const token = cookies(req).get(SESSION_COOKIE)
       if (token) db.query("delete from sessions where token_hash = ?").run(sha256(token))
-      return json({ ok: true }, { headers: { "set-cookie": cookie(SESSION_COOKIE, "", 0) } })
+      // Clear-Site-Data drops cached previews, so the next account on this browser starts empty.
+      return json({ ok: true }, { headers: { "set-cookie": cookie(SESSION_COOKIE, "", 0), "clear-site-data": '"cache"' } })
     }
 
     if (path === "/api/auth/register/options") {
@@ -178,6 +182,7 @@ export function createAuth(config: Config, db: Db) {
       }
       const { credential } = verification.registrationInfo
       const now = Date.now()
+      if (db.query("select 1 from credentials where id = ?").get(credential.id)) throw new HttpError(409, "passkey exists")
       db.transaction(() => {
         // Spend the invite in the same step, so one link makes one passkey.
         if (who.invite && db.query("update invites set used_at = ? where token_hash = ? and used_at is null").run(now, who.invite).changes !== 1) throw new HttpError(403)

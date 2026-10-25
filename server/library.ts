@@ -2,10 +2,11 @@
 // changed and removed files, reads their metadata with exiftool and makes two
 // WebP sizes with vips (videos first give a frame with ffmpeg).
 import { randomBytes } from "node:crypto"
-import { mkdir, readdir, rename, rm, stat } from "node:fs/promises"
+import { lstat, mkdir, readdir, rename, rm, stat } from "node:fs/promises"
 import { dirname, extname, join, relative, sep } from "node:path"
 import type { Config } from "./config"
 import type { Db, Photo } from "./db"
+import { resolveExisting } from "./paths"
 import { log } from "./otel"
 
 const IMAGE = new Set([".jpg", ".jpeg", ".heic", ".heif", ".png", ".webp", ".gif", ".tif", ".tiff", ".dng", ".avif"])
@@ -64,7 +65,9 @@ async function exiftool(paths: string[]): Promise<Map<string, Record<string, unk
 export async function walk(root: string): Promise<Found[]> {
   const files: { path: string; size: number; mtime: number; ext: string }[] = []
   async function visit(dir: string) {
-    for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    // The root must read; a missing mount must not look like an empty library.
+    const entries = dir === root ? await readdir(dir, { withFileTypes: true }) : await readdir(dir, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
       if (entry.name.startsWith(".") || entry.name.startsWith("@")) continue
       const full = join(dir, entry.name)
       if (entry.isDirectory()) await visit(full)
@@ -107,7 +110,7 @@ export function createLibrary(config: Config, db: Db) {
       let still = source
       if (kind === "video") {
         still = join(work, "frame.png")
-        await run(["ffmpeg", "-v", "error", "-i", source, "-frames:v", "1", "-y", still])
+        await run(["ffmpeg", "-v", "error", "-protocol_whitelist", "file", "-i", source, "-frames:v", "1", "-y", still])
       }
       const large = join(work, "large.webp")
       const thumb = join(work, "thumb.webp")
@@ -128,10 +131,12 @@ export function createLibrary(config: Config, db: Db) {
 
   async function process(job: (typeof queue)[number]) {
     const { userId, found, meta, id, version } = job
-    const source = join(config.library, userId, found.path)
     let status: Photo["status"] = "ready"
     let size = { width: 0, height: 0 }
     try {
+      // Resolve again right before reading: the file may have become a
+      // symlink since the scan, and nothing outside this user's folder renders.
+      const source = await resolveExisting(join(config.library, userId), found.path)
       size = await render(source, found.kind, id)
     } catch (error) {
       status = "failed"
@@ -167,7 +172,11 @@ export function createLibrary(config: Config, db: Db) {
 
   async function scanUser(userId: string) {
     const root = join(config.library, userId)
-    await mkdir(root, { recursive: true })
+    // The user folder itself must be a real folder, not a link to another one.
+    if (!(await lstat(root).catch(() => null))?.isDirectory()) {
+      log("library.no_folder", { user: userId }, "WARN")
+      return
+    }
     const found = await walk(root)
     const known = new Map(
       (db.query("select id, path, size, mtime, live_path, version from photos where user_id = ?").all(userId) as Pick<Photo, "id" | "path" | "size" | "mtime" | "live_path" | "version">[]).map(p => [p.path, p]),
@@ -195,7 +204,8 @@ export function createLibrary(config: Config, db: Db) {
   function scan() {
     scanning ??= (async () => {
       const users = db.query("select id from users").all() as { id: string }[]
-      for (const user of users) await scanUser(user.id)
+      // One user's failure must not stop the others.
+      for (const user of users) await scanUser(user.id).catch(error => log("library.scan_failed", { user: user.id, error: String(error).split(":")[0] }, "ERROR"))
     })().finally(() => {
       scanning = null
     })

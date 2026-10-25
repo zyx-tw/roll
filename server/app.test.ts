@@ -184,3 +184,35 @@ describe("metadata", () => {
     expect(readMeta({ GPSLatitude: 25.03, GPSLongitude: 121.56 })).toMatchObject({ lat: 25.03, lon: 121.56 })
   })
 })
+
+describe("review fixes", () => {
+  test("logout clears cached previews", async () => {
+    const res = await req("/api/auth/logout", { method: "POST", body: "{}" })
+    expect(res.headers.get("clear-site-data")).toBe('"cache"')
+    const ann = (await body(req("/api/photos", { as: "ann" }))).items[0]
+    expect((await req(`/api/photos/${ann.id}/thumb`, { as: "ann" })).headers.get("vary")).toBe("Cookie")
+  })
+  test("a file that turns into a symlink never renders", async () => {
+    const lib = join(dir, "data/library")
+    signIn("eve")
+    mkdirSync(join(lib, "eve"), { recursive: true })
+    await photo(join(lib, "eve/swap.jpg"), "2025:01:01 10:00:00")
+    const scanning = app.library.scan()
+    // The swap races the scan; either the walk skips the link or the render refuses it.
+    rmSync(join(lib, "eve/swap.jpg"))
+    symlinkSync(join(lib, "bob/c.jpg"), join(lib, "eve/swap.jpg"))
+    await scanning
+    await app.library.drained()
+    const row = app.db.query("select status from photos where user_id = 'eve'").get() as { status: string } | null
+    if (row) expect(row.status).toBe("failed")
+    expect((await body(req("/api/photos", { as: "eve" }))).items).toHaveLength(0)
+  })
+  test("a missing user folder keeps the timeline", async () => {
+    const lib = join(dir, "data/library")
+    const before = (await body(req("/api/photos", { as: "bob" }))).items.length
+    cpSync(join(lib, "bob"), join(dir, "bob-moved"), { recursive: true })
+    rmSync(join(lib, "bob"), { recursive: true })
+    await app.library.scan()
+    expect((await body(req("/api/photos", { as: "bob" }))).items).toHaveLength(before)
+  })
+})
