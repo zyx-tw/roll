@@ -15,6 +15,8 @@ You copy the originals from a phone to the server. roll reads them, makes small 
 - **Sign in with a passkey**: Touch ID or Face ID, no password.
 - **Invite a person**: a one-time link registers a passkey for one account.
 - **Browse a timeline**: a masonry wall in capture order, loaded page by page.
+- **Search by date**: `4/15`, `2026-04` or `2026 年 4 月`; press `/` or Cmd+K.
+- **Upload**: pick files or drop them on the page; originals keep every byte.
 - **Open a photo**: a full-screen viewer with arrow keys, swipe and download of the original.
 - **Keep iPhone formats**: HEIC photos, HEVC videos and Live Photos play as they are.
 
@@ -72,7 +74,7 @@ Facts for coding agents and LLM tools. The rules for changing the code are in [A
 - **Verify**: `bun test server`
 - **Config**: `ROLL_ORIGIN`, `ROLL_DATA`, `ROLL_LIBRARY`, `ROLL_DIST`, `ROLL_PORT`, `ROLL_SCAN_MINUTES`, `ROLL_WORKERS`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`
 - **Secrets**: the OTLP header lives in `/etc/roll/env` on the server.
-- **Limits**: No upload in the app yet. Files arrive by rsync. No search yet.
+- **Limits**: Search covers dates only so far.
 
 ## Development
 

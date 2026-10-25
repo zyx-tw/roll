@@ -29,6 +29,8 @@ function clientIp(req: Request, peer: string) {
 const server = Bun.serve({
   port: config.port,
   hostname: process.env.ROLL_HOSTNAME ?? "0.0.0.0",
+  // Uploads stream to disk; the upload route sets its own limit.
+  maxRequestBodySize: 32 * 1024 ** 3,
   idleTimeout: 255,
   fetch(req, srv) {
     return app.fetch(req, clientIp(req, srv.requestIP(req)?.address ?? "unknown"))

@@ -1,17 +1,25 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser"
-import { ChevronLeft, ChevronRight, Download, LogOut, Play, X } from "lucide-react"
+import { ChevronLeft, ChevronRight, Download, LogOut, Play, Search, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { TaskShell } from "@/components/task-shell"
 import { TaskThemeToggle } from "@/components/task-theme"
 import { Button } from "@/components/ui/button"
-import { ApiError, api, formatDuration, formatTaken, post, type Photo } from "@/lib/api"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { ApiError, api, formatDuration, formatTaken, post, uploadFile, type Photo } from "@/lib/api"
 
 type Me = { user: { id: string; name: string } | null }
 
 export function RollApp() {
   const [me, setMe] = useState<Me | null>(null)
+  const [query, setQuery] = useState("")
+  const [searching, setSearching] = useState(false)
+  const [reload, setReload] = useState(0)
+  const picker = useRef<HTMLInputElement>(null)
   const invite = new URLSearchParams(window.location.search).get("invite")
+  const signedIn = !!me?.user
 
   useEffect(() => {
     api<Me>("/api/auth/me").then(setMe, () => setMe({ user: null }))
@@ -47,25 +55,108 @@ export function RollApp() {
     setMe({ user: null })
   }
 
-  const actions = (
-    <>
-      <TaskThemeToggle lang="zh-TW" />
-      {me?.user && (
-        <Button type="button" variant="ghost" size="icon" className="-m-3" onClick={logout} aria-label="登出" title="登出">
-          <LogOut aria-hidden />
-        </Button>
-      )}
-    </>
+  // "/" or Cmd+K opens search, as on gallery.
+  useEffect(() => {
+    if (!signedIn) return
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target
+      if (target instanceof Element && target.closest("input, textarea, [contenteditable]:not([contenteditable=false])")) return
+      if (event.key === "/" || (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey))) {
+        event.preventDefault()
+        setSearching(true)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [signedIn])
+
+  async function send(files: File[]) {
+    const media = files.filter(file => /^(image|video)\//.test(file.type) || /\.(heic|heif|dng|mov|mp4|m4v)$/i.test(file.name))
+    if (media.length === 0) return
+    const id = toast.loading(`上傳 0/${media.length}`)
+    let done = 0
+    let failed = 0
+    for (const file of media) {
+      try {
+        await uploadFile(file, fraction => toast.loading(`上傳 ${done + 1}/${media.length}，${Math.round(fraction * 100)}%`, { id }))
+        done++
+      } catch {
+        failed++
+      }
+    }
+    if (failed) toast.error(`${failed} 個上傳失敗`, { id })
+    else toast.success(`已上傳 ${done} 個`, { id })
+    // The server renders in the background; look again as previews land.
+    for (const wait of [2000, 6000, 15000, 40000]) setTimeout(() => setReload(n => n + 1), wait)
+  }
+
+  // Files dropped anywhere on the page upload.
+  useEffect(() => {
+    if (!signedIn) return
+    const over = (event: DragEvent) => event.dataTransfer?.types.includes("Files") && event.preventDefault()
+    const drop = (event: DragEvent) => {
+      if (!event.dataTransfer?.files.length) return
+      event.preventDefault()
+      void send(Array.from(event.dataTransfer.files))
+    }
+    window.addEventListener("dragover", over)
+    window.addEventListener("drop", drop)
+    return () => {
+      window.removeEventListener("dragover", over)
+      window.removeEventListener("drop", drop)
+    }
+  }, [signedIn])
+
+  // Each button keeps its 40px hit area; only the row is pulled to the corner.
+  const actions = signedIn ? (
+    <div className="-my-3 -mr-3 flex items-center">
+      <Button type="button" variant="ghost" size="icon" onClick={() => setSearching(true)} aria-label="搜尋" title="搜尋">
+        <Search aria-hidden />
+      </Button>
+      <Button type="button" variant="ghost" size="icon" onClick={() => picker.current?.click()} aria-label="上傳" title="上傳">
+        <Upload aria-hidden />
+      </Button>
+      <TaskThemeToggle lang="zh-TW" className="" />
+      <Button type="button" variant="ghost" size="icon" onClick={logout} aria-label="登出" title="登出">
+        <LogOut aria-hidden />
+      </Button>
+      <input
+        ref={picker}
+        type="file"
+        accept="image/*,video/*,.heic,.heif,.dng"
+        multiple
+        hidden
+        onChange={event => {
+          void send(Array.from(event.target.files ?? []))
+          event.target.value = ""
+        }}
+      />
+    </div>
+  ) : (
+    <TaskThemeToggle lang="zh-TW" />
   )
 
   return (
-    <TaskShell title="roll" lang="zh-TW" actions={actions} wide>
+    <TaskShell title="roll" lang="zh-TW" actions={actions} wide showTitle={false} bottomCorners={false}>
       {me && !me.user && (
         <section aria-label="登入" className="flex gap-3">
           {invite ? <Button onClick={register}>註冊</Button> : <Button onClick={login}>登入</Button>}
         </section>
       )}
-      {me?.user && <Timeline onSignedOut={() => setMe({ user: null })} />}
+      {me?.user && (
+        <>
+          {query && (
+            <div className="mb-6 flex items-center gap-2 text-body">
+              <span>{query}</span>
+              <Button type="button" variant="ghost" size="icon" onClick={() => setQuery("")} aria-label="清除搜尋" title="清除搜尋">
+                <X aria-hidden />
+              </Button>
+            </div>
+          )}
+          <Timeline key={`${query}:${reload}`} query={query} onSignedOut={() => setMe({ user: null })} />
+          <SearchDialog open={searching} initial={query} onClose={() => setSearching(false)} onSubmit={setQuery} />
+        </>
+      )}
     </TaskShell>
   )
 }
@@ -82,7 +173,7 @@ function columnsFor(width: number) {
 
 const GAP = 8
 
-function Timeline({ onSignedOut }: { onSignedOut: () => void }) {
+function Timeline({ query, onSignedOut }: { query: string; onSignedOut: () => void }) {
   const [photos, setPhotos] = useState<Photo[]>([])
   const [next, setNext] = useState<string | null | undefined>(undefined)
   const [loading, setLoading] = useState(false)
@@ -95,7 +186,10 @@ function Timeline({ onSignedOut }: { onSignedOut: () => void }) {
     if (loading || next === null) return
     setLoading(true)
     try {
-      const page = await api<{ items: Photo[]; next: string | null }>(`/api/photos${next ? `?cursor=${encodeURIComponent(next)}` : ""}`)
+      const params = new URLSearchParams()
+      if (query) params.set("q", query)
+      if (next) params.set("cursor", next)
+      const page = await api<{ items: Photo[]; next: string | null }>(`/api/photos?${params}`)
       setPhotos(list => [...list, ...page.items])
       setNext(page.next)
     } catch (error) {
@@ -104,7 +198,7 @@ function Timeline({ onSignedOut }: { onSignedOut: () => void }) {
     } finally {
       setLoading(false)
     }
-  }, [loading, next, onSignedOut])
+  }, [loading, next, query, onSignedOut])
 
   useLayoutEffect(() => {
     const el = grid.current
@@ -162,7 +256,7 @@ function Timeline({ onSignedOut }: { onSignedOut: () => void }) {
         ))}
       </div>
       <div ref={sentinel} aria-hidden className="h-px" />
-      {next === null && photos.length === 0 && <p className="text-body text-muted-foreground">沒有照片</p>}
+      {next === null && photos.length === 0 && <p className="text-body text-muted-foreground">{query ? "沒有符合的照片" : "沒有照片"}</p>}
       {open !== null && photos[open] && (
         <Viewer
           photos={photos}
@@ -275,5 +369,34 @@ function Viewer({ photos, index, onIndex, onClose }: { photos: Photo[]; index: n
         )}
       </div>
     </div>
+  )
+}
+
+function SearchDialog({ open, initial, onClose, onSubmit }: { open: boolean; initial: string; onClose: () => void; onSubmit: (query: string) => void }) {
+  const [value, setValue] = useState(initial)
+
+  function submit(event: FormEvent) {
+    event.preventDefault()
+    onSubmit(value.trim())
+    onClose()
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={next => !next && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>搜尋</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="flex flex-col gap-6">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="search">日期</Label>
+            <Input id="search" value={value} onChange={event => setValue(event.target.value)} autoFocus autoComplete="off" enterKeyHint="search" />
+          </div>
+          <DialogFooter>
+            <Button type="submit">搜尋</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }

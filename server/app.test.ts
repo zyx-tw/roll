@@ -7,6 +7,7 @@ import { createApp } from "./app"
 import { createInvite } from "./auth"
 import { loadConfig } from "./config"
 import { exifTime, readMeta } from "./library"
+import { parseDateQuery } from "./search"
 
 const ROLL = "http://roll.test"
 let dir: string
@@ -214,5 +215,68 @@ describe("review fixes", () => {
     rmSync(join(lib, "bob"), { recursive: true })
     await app.library.scan()
     expect((await body(req("/api/photos", { as: "bob" }))).items).toHaveLength(before)
+    cpSync(join(dir, "bob-moved"), join(lib, "bob"), { recursive: true })
+  })
+})
+
+describe("date search", () => {
+  const now = Date.parse("2026-10-26T12:00:00+08:00")
+  const day = (s: string) => Date.parse(`${s}T00:00:00+08:00`)
+  test("years, months and days", () => {
+    expect(parseDateQuery("2025", now)).toEqual({ from: day("2025-01-01"), to: day("2026-01-01") })
+    expect(parseDateQuery("2026-04", now)).toEqual({ from: day("2026-04-01"), to: day("2026-05-01") })
+    expect(parseDateQuery("2026年4月15日", now)).toEqual({ from: day("2026-04-15"), to: day("2026-04-16") })
+    expect(parseDateQuery("2025/12", now)).toEqual({ from: day("2025-12-01"), to: day("2026-01-01") })
+  })
+  test("a month or day without a year is the latest one not in the future", () => {
+    expect(parseDateQuery("4/15", now)).toEqual({ from: day("2026-04-15"), to: day("2026-04-16") })
+    expect(parseDateQuery("4月", now)).toEqual({ from: day("2026-04-01"), to: day("2026-05-01") })
+    expect(parseDateQuery("12/25", now)).toEqual({ from: day("2025-12-25"), to: day("2025-12-26") })
+  })
+  test("anything else is not a date", () => {
+    for (const q of ["東京", "13月", "2026-13", "4/32", ""]) expect(parseDateQuery(q, now)).toBeNull()
+  })
+  test("the timeline filters by the query", async () => {
+    const all = (await body(req("/api/photos", { as: "ann" }))).items.length
+    expect(all).toBeGreaterThan(1)
+    const june = (await body(req("/api/photos?q=2025-06", { as: "ann" }))).items
+    expect(june).toHaveLength(1)
+    expect((await body(req(`/api/photos?q=${encodeURIComponent("東京")}`, { as: "ann" }))).items).toHaveLength(0)
+  })
+})
+
+describe("upload", () => {
+  const put = (name: string, bytes: Uint8Array | string, as = "ann", extra = "") =>
+    req(`/api/upload?name=${encodeURIComponent(name)}${extra}`, { method: "PUT", body: bytes, as })
+  test("needs a session and a photo or video name", async () => {
+    expect((await req("/api/upload?name=a.jpg", { method: "PUT", body: "x" })).status).toBe(401)
+    expect((await put("notes.txt", "x")).status).toBe(415)
+    for (const bad of ["../a.jpg", "a/b.jpg", ".hidden.jpg", ""]) expect([400, 415]).toContain((await put(bad, "x")).status)
+  })
+  test("keeps the bytes, picks a free name and shows up after a scan", async () => {
+    const src = join(dir, "data/library/ann/2025/a.jpg")
+    const bytes = new Uint8Array(await Bun.file(src).arrayBuffer())
+    const before = (await body(req("/api/photos", { as: "ann" }))).items.length
+    const first = await body(put("trip.jpg", bytes, "ann", "&modified=1700000000000"))
+    const second = await body(put("trip.jpg", bytes))
+    expect(first.name).toBe("trip.jpg")
+    expect(second.name).toBe("trip_1.jpg")
+    const folder = (await Array.fromAsync(new Bun.Glob("uploads/*/trip.jpg").scan(join(dir, "data/library/ann"))))[0]
+    const saved = join(dir, "data/library/ann", folder)
+    expect(new Uint8Array(await Bun.file(saved).arrayBuffer())).toEqual(bytes)
+    expect(Math.round((await Bun.file(saved).stat()).mtimeMs)).toBe(1700000000000)
+    await app.library.scan()
+    await app.library.drained()
+    expect((await body(req("/api/photos", { as: "ann" }))).items.length).toBe(before + 2)
+    // Bob's library is untouched.
+    expect(await Array.fromAsync(new Bun.Glob("uploads/**").scan(join(dir, "data/library/bob")))).toHaveLength(0)
+  })
+  test("an uploads folder that links elsewhere is refused", async () => {
+    const lib = join(dir, "data/library")
+    signIn("gil")
+    mkdirSync(join(lib, "gil"), { recursive: true })
+    symlinkSync(join(lib, "bob"), join(lib, "gil/uploads"))
+    expect((await put("x.jpg", "x", "gil")).status).toBe(404)
+    expect(await Array.fromAsync(new Bun.Glob("*.jpg").scan(join(lib, "bob")))).not.toContain("x.jpg")
   })
 })
