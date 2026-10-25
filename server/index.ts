@@ -21,7 +21,7 @@ if (process.argv[2] === "invite") {
 
 const app = createApp(config)
 
-// An upload cut off by a crash leaves a .part file; nothing else lives in tmp.
+// Uploads in progress live in memory, so their .part files die with a restart; nothing else lives in tmp.
 for (const name of await readdir(config.tmp).catch(() => [])) if (name.endsWith(".part")) await rm(join(config.tmp, name), { force: true })
 
 // Caddy sets X-Forwarded-For to the real client; the last entry is the one it added.
@@ -33,8 +33,8 @@ function clientIp(req: Request, peer: string) {
 const server = Bun.serve({
   port: config.port,
   hostname: process.env.ROLL_HOSTNAME ?? "0.0.0.0",
-  // Uploads stream to disk; the upload route sets its own limit.
-  maxRequestBodySize: 32 * 1024 ** 3,
+  // Uploads arrive in chunks of at most 16 MB; nothing else is that large.
+  maxRequestBodySize: 32 * 1024 ** 2,
   idleTimeout: 255,
   fetch(req, srv) {
     return app.fetch(req, clientIp(req, srv.requestIP(req)?.address ?? "unknown"))

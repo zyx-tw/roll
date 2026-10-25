@@ -18,6 +18,7 @@ export function RollApp() {
   const [searching, setSearching] = useState(false)
   const [reload, setReload] = useState(0)
   const picker = useRef<HTMLInputElement>(null)
+  const pickedAt = useRef(0)
   const invite = new URLSearchParams(window.location.search).get("invite")
   const signedIn = !!me?.user
 
@@ -70,15 +71,41 @@ export function RollApp() {
     return () => window.removeEventListener("keydown", onKey)
   }, [signedIn])
 
+  // The picker closed with nothing. A quick close is the user changing their
+  // mind; a slow one is iOS giving up on a photo it was fetching from iCloud.
+  const nothingPicked = useCallback(() => {
+    if (Date.now() - pickedAt.current > 3000) toast.error("沒有收到檔案", { description: "iCloud 上的照片要等 iPhone 下載完再選" })
+  }, [])
+
+  useEffect(() => {
+    const input = picker.current
+    if (!input) return
+    input.addEventListener("cancel", nothingPicked)
+    return () => input.removeEventListener("cancel", nothingPicked)
+  }, [signedIn, nothingPicked])
+
   async function send(files: File[]) {
     const media = files.filter(file => /^(image|video)\//.test(file.type) || /\.(heic|heif|dng|mov|mp4|m4v)$/i.test(file.name))
     if (media.length === 0) return
+    // Leaving the page stops the upload; ask first.
+    const stay = (event: BeforeUnloadEvent) => event.preventDefault()
+    window.addEventListener("beforeunload", stay)
+    try {
+      await sendAll(media)
+    } finally {
+      window.removeEventListener("beforeunload", stay)
+    }
+  }
+
+  async function sendAll(media: File[]) {
     const id = toast.loading(`上傳中 0/${media.length}`)
     let done = 0
     let failed = 0
     for (const file of media) {
       try {
-        await uploadFile(file, fraction => toast.loading(`上傳中 ${done + 1}/${media.length}，${Math.round(fraction * 100)}%`, { id }))
+        await uploadFile(file, (fraction, waiting) =>
+          toast.loading(waiting ? `連線中斷，等待重試 ${done + 1}/${media.length}` : `上傳中 ${done + 1}/${media.length}，${Math.round(fraction * 100)}%`, { id }),
+        )
         done++
       } catch {
         failed++
@@ -126,7 +153,10 @@ export function RollApp() {
       <Button type="button" variant="ghost" size="icon" onClick={() => setSearching(true)} aria-label="搜尋" title="搜尋">
         <Search aria-hidden />
       </Button>
-      <Button type="button" variant="ghost" size="icon" onClick={() => picker.current?.click()} aria-label="上傳" title="上傳">
+      <Button type="button" variant="ghost" size="icon" onClick={() => {
+          pickedAt.current = Date.now()
+          picker.current?.click()
+        }} aria-label="上傳" title="上傳">
         <Upload aria-hidden />
       </Button>
       <Button type="button" variant="ghost" size="icon" onClick={logout} aria-label="登出" title="登出">
@@ -139,7 +169,9 @@ export function RollApp() {
         multiple
         hidden
         onChange={event => {
-          void send(Array.from(event.target.files ?? []))
+          const files = Array.from(event.target.files ?? [])
+          if (files.length === 0) nothingPicked()
+          void send(files)
           event.target.value = ""
         }}
       />
