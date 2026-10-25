@@ -480,7 +480,6 @@ function SearchDialog({ open, initial, onClose, onSubmit }: { open: boolean; ini
               autoFocus
               autoComplete="off"
               enterKeyHint="search"
-              placeholder="京都、2026 年 4 月"
               aria-label="搜尋照片"
               className="pl-9"
             />
