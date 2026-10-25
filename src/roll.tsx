@@ -5,9 +5,8 @@ import { toast } from "sonner"
 import { TaskShell } from "@/components/task-shell"
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { ApiError, api, formatDuration, formatTaken, post, uploadFile, type Photo } from "@/lib/api"
 
 type Me = { user: { id: string; name: string } | null }
@@ -15,6 +14,7 @@ type Me = { user: { id: string; name: string } | null }
 export function RollApp() {
   const [me, setMe] = useState<Me | null>(null)
   const [query, setQuery] = useState("")
+  const [focus, setFocus] = useState<string | undefined>(undefined)
   const [searching, setSearching] = useState(false)
   const [reload, setReload] = useState(0)
   const picker = useRef<HTMLInputElement>(null)
@@ -163,8 +163,17 @@ export function RollApp() {
               </Button>
             </div>
           )}
-          <Timeline key={`${query}:${reload}`} query={query} onSignedOut={() => setMe({ user: null })} />
-          <SearchDialog open={searching} initial={query} onClose={() => setSearching(false)} onSubmit={setQuery} />
+          <Timeline key={`${query}:${reload}`} query={query} focus={focus} onSignedOut={() => setMe({ user: null })} />
+          <SearchDialog
+            key={searching ? "open" : "closed"}
+            open={searching}
+            initial={query}
+            onClose={() => setSearching(false)}
+            onSubmit={(next, photoId) => {
+              setQuery(next)
+              setFocus(photoId)
+            }}
+          />
         </>
       )}
     </TaskShell>
@@ -183,13 +192,22 @@ function columnsFor(width: number) {
 
 const GAP = 8
 
-function Timeline({ query, onSignedOut }: { query: string; onSignedOut: () => void }) {
+function Timeline({ query, focus, onSignedOut }: { query: string; focus?: string; onSignedOut: () => void }) {
   const [photos, setPhotos] = useState<Photo[]>([])
   const [next, setNext] = useState<string | null | undefined>(undefined)
   const [loading, setLoading] = useState(false)
   const [width, setWidth] = useState(0)
   const [open, setOpen] = useState<number | null>(null)
   const grid = useRef<HTMLDivElement>(null)
+  // A photo picked in search opens once its page has loaded.
+  const [focused, setFocused] = useState(false)
+  if (focus && !focused && open === null) {
+    const index = photos.findIndex(p => p.id === focus)
+    if (index >= 0) {
+      setFocused(true)
+      setOpen(index)
+    }
+  }
   const sentinel = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async () => {
@@ -423,8 +441,24 @@ function Viewer({ photos, index, onIndex, onClose, onDeleted }: { photos: Photo[
   )
 }
 
-function SearchDialog({ open, initial, onClose, onSubmit }: { open: boolean; initial: string; onClose: () => void; onSubmit: (query: string) => void }) {
+// Results as you type, like gallery.winlab.tw. Enter shows them on the
+// timeline; a picked photo opens there.
+function SearchDialog({ open, initial, onClose, onSubmit }: { open: boolean; initial: string; onClose: () => void; onSubmit: (query: string, photoId?: string) => void }) {
   const [value, setValue] = useState(initial)
+  const [results, setResults] = useState<Photo[] | null>(null)
+  const latest = useRef(0)
+
+  useEffect(() => {
+    const text = value.trim()
+    if (!open || !text) return
+    const ticket = ++latest.current
+    const timer = setTimeout(async () => {
+      const page = await api<{ items: Photo[] }>(`/api/photos?limit=60&q=${encodeURIComponent(text)}`).catch(() => ({ items: [] }))
+      // A slower answer to an older query never replaces a newer one.
+      if (ticket === latest.current) setResults(page.items)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [value, open])
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -432,20 +466,45 @@ function SearchDialog({ open, initial, onClose, onSubmit }: { open: boolean; ini
     onClose()
   }
 
+  const shown = value.trim() ? results : null
   return (
     <Dialog open={open} onOpenChange={next => !next && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>搜尋</DialogTitle>
-        </DialogHeader>
+      <DialogContent size="wide" showCloseButton={false}>
+        <DialogTitle className="sr-only">搜尋</DialogTitle>
         <form onSubmit={submit} className="flex flex-col gap-6">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="search">日期</Label>
-            <Input id="search" value={value} onChange={event => setValue(event.target.value)} autoFocus autoComplete="off" enterKeyHint="search" />
+          <div className="relative">
+            <Search aria-hidden className="pointer-events-none absolute top-3 left-3 size-4 text-muted-foreground" />
+            <Input
+              value={value}
+              onChange={event => setValue(event.target.value)}
+              autoFocus
+              autoComplete="off"
+              enterKeyHint="search"
+              placeholder="京都、2026 年 4 月"
+              aria-label="搜尋照片"
+              className="pl-9"
+            />
           </div>
-          <DialogFooter>
-            <Button type="submit">搜尋</Button>
-          </DialogFooter>
+          {shown && shown.length === 0 && <p className="text-center text-body text-muted-foreground">找不到符合「{value.trim()}」的照片</p>}
+          {shown && shown.length > 0 && (
+            <ul className="grid max-h-120 grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4">
+              {shown.map(photo => (
+                <li key={photo.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSubmit(value.trim(), photo.id)
+                      onClose()
+                    }}
+                    className="block aspect-square w-full overflow-hidden rounded-control bg-muted outline-offset-2 focus-visible:outline-2"
+                    aria-label={formatTaken(photo.takenAt)}
+                  >
+                    <img src={media(photo, "thumb")} alt="" loading="lazy" className="size-full object-cover" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </form>
       </DialogContent>
     </Dialog>
