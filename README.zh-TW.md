@@ -17,8 +17,9 @@
 - **用 passkey 登入**：Touch ID 或 Face ID，不用密碼。
 - **邀請一個人**：一次性連結替一個帳號註冊 passkey。
 - **瀏覽時間軸**：依拍攝順序的瀑布牆，捲動時分頁載入。
-- **用日期搜尋**：`4/15`、`2026-04` 或 `2026 年 4 月`，按 `/` 或 Cmd+K。
+- **一個框搜尋**：日期（`4/15`、`2026 年 4 月`）、城市（`京都`、`Kyoto`）和國家（`日本`）可以一起用，按 `/` 或 Cmd+K。
 - **上傳**：選檔案或拖進頁面，原檔一個位元都不改。
+- **刪除**：照片移到 `<user>/.trash/<日期>/`，從時間軸消失。
 - **打開照片**：全螢幕檢視，支援方向鍵、滑動和下載原檔。
 - **保留 iPhone 格式**：HEIC 照片、HEVC 影片和原況照片照原樣播放。
 
@@ -51,6 +52,7 @@ bun run start
 | `ROLL_PORT` | 監聽埠 | `8080` |
 | `ROLL_SCAN_MINUTES` | 兩次掃描間隔的分鐘數 | `15` |
 | `ROLL_WORKERS` | 同時製作的預覽數 | `2` |
+| `ROLL_GEONAMES` | GeoNames 的 `cities1000.txt`，用來查城市名稱 | `<ROLL_DATA>/geo/cities1000.txt` |
 | `ROLL_RESERVE_GB` | 上傳後至少要留下的磁碟空間 | `10` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP JSON 記錄送往的位置 | 關閉 |
 

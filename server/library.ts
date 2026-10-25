@@ -6,6 +6,7 @@ import { lstat, mkdir, readdir, rename, rm, stat } from "node:fs/promises"
 import { dirname, extname, join, relative, sep } from "node:path"
 import type { Config } from "./config"
 import type { Db, Photo } from "./db"
+import type { Places } from "./places"
 import { resolveExisting } from "./paths"
 import { log } from "./otel"
 
@@ -90,9 +91,11 @@ export async function walk(root: string): Promise<Found[]> {
     .map(f => ({ path: f.path, size: f.size, mtime: f.mtime, kind: IMAGE.has(f.ext) ? "image" : "video", live: liveOf.get(f.path) ?? null }))
 }
 
-export function createLibrary(config: Config, db: Db) {
+export function createLibrary(config: Config, db: Db, places: Places) {
   const queue: { userId: string; found: Found; meta: Meta; id: string; version: number }[] = []
   let running = 0
+  // Files being rendered right now, per user, for the upload status.
+  const busy = new Map<string, number>()
   let scanning: Promise<void> | null = null
   let idle: (() => void)[] = []
 
@@ -143,21 +146,24 @@ export function createLibrary(config: Config, db: Db) {
       // Tool errors quote the file path, so only the tool and its exit code go out.
       log("library.render_failed", { id: id.slice(0, 4), kind: found.kind, error: /^Error: (\S+ exited \d+)/.exec(String(error))?.[1] ?? "error" }, "WARN")
     }
+    const town = meta.lat !== null && meta.lon !== null ? places.nearest(meta.lat, meta.lon) : null
     db.query(
-      `insert into photos (id, user_id, path, size, mtime, kind, taken_at, width, height, duration, lat, lon, live_path, status, version)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `insert into photos (id, user_id, path, size, mtime, kind, taken_at, width, height, duration, lat, lon, live_path, status, version, place_id, country)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        on conflict(user_id, path) do update set size = excluded.size, mtime = excluded.mtime, kind = excluded.kind, taken_at = excluded.taken_at,
          width = excluded.width, height = excluded.height, duration = excluded.duration, lat = excluded.lat, lon = excluded.lon,
-         live_path = excluded.live_path, status = excluded.status, version = excluded.version`,
-    ).run(id, userId, found.path, found.size, found.mtime, found.kind, meta.takenAt ?? found.mtime, size.width, size.height, meta.duration, meta.lat, meta.lon, found.live, status, version)
+         live_path = excluded.live_path, status = excluded.status, version = excluded.version, place_id = excluded.place_id, country = excluded.country`,
+    ).run(id, userId, found.path, found.size, found.mtime, found.kind, meta.takenAt ?? found.mtime, size.width, size.height, meta.duration, meta.lat, meta.lon, found.live, status, version, town?.id ?? null, town?.country ?? null)
   }
 
   function pump() {
     while (running < config.workers && queue.length > 0) {
       const job = queue.shift()!
       running++
+      busy.set(job.userId, (busy.get(job.userId) ?? 0) + 1)
       process(job).finally(() => {
         running--
+        busy.set(job.userId, busy.get(job.userId)! - 1)
         pump()
       })
     }
@@ -200,6 +206,20 @@ export function createLibrary(config: Config, db: Db) {
     pump()
   }
 
+  // Photos scanned before places existed, or before the town file arrived.
+  function placeMissing() {
+    if (!places.ready) return
+    const rows = db.query("select id, lat, lon from photos where lat is not null and place_id is null").all() as Pick<Photo, "id" | "lat" | "lon">[]
+    const set = db.query("update photos set place_id = ?, country = ? where id = ?")
+    db.transaction(() => {
+      for (const row of rows) {
+        const town = places.nearest(row.lat!, row.lon!)
+        if (town) set.run(town.id, town.country, row.id)
+      }
+    })()
+    if (rows.length) log("library.places", { photos: rows.length })
+  }
+
   // One scan at a time. A call during a scan runs one more scan after it, so
   // a file that lands mid-scan (an upload) is picked up without waiting.
   let again = false
@@ -209,6 +229,7 @@ export function createLibrary(config: Config, db: Db) {
       return scanning
     }
     scanning = (async () => {
+      placeMissing()
       do {
         again = false
         const users = db.query("select id from users").all() as { id: string }[]
@@ -223,5 +244,11 @@ export function createLibrary(config: Config, db: Db) {
     return scanning
   }
 
-  return { scan, drained, file, cacheDir }
+  // How many of a user's files still wait for previews, scan included.
+  const pending = (userId: string) => ({
+    files: queue.filter(job => job.userId === userId).length + (busy.get(userId) ?? 0),
+    scanning: scanning !== null,
+  })
+
+  return { scan, drained, file, cacheDir, pending }
 }

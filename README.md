@@ -15,8 +15,9 @@ You copy the originals from a phone to the server. roll reads them, makes small 
 - **Sign in with a passkey**: Touch ID or Face ID, no password.
 - **Invite a person**: a one-time link registers a passkey for one account.
 - **Browse a timeline**: a masonry wall in capture order, loaded page by page.
-- **Search by date**: `4/15`, `2026-04` or `2026 年 4 月`; press `/` or Cmd+K.
+- **Search in one box**: dates (`4/15`, `2026 年 4 月`), towns (`京都`, `Kyoto`) and countries (`日本`), combined; press `/` or Cmd+K.
 - **Upload**: pick files or drop them on the page; originals keep every byte.
+- **Delete**: a photo moves to `<user>/.trash/<day>/`, out of the timeline.
 - **Open a photo**: a full-screen viewer with arrow keys, swipe and download of the original.
 - **Keep iPhone formats**: HEIC photos, HEVC videos and Live Photos play as they are.
 
@@ -49,6 +50,7 @@ Open the printed link and register a passkey. Copy photos into `data/library/lok
 | `ROLL_PORT` | the listen port | `8080` |
 | `ROLL_SCAN_MINUTES` | minutes between library scans | `15` |
 | `ROLL_WORKERS` | previews made at once | `2` |
+| `ROLL_GEONAMES` | GeoNames `cities1000.txt`, for town names | `<ROLL_DATA>/geo/cities1000.txt` |
 | `ROLL_RESERVE_GB` | disk space an upload must leave free | `10` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | where OTLP/HTTP JSON logs go | off |
 
@@ -75,7 +77,7 @@ Facts for coding agents and LLM tools. The rules for changing the code are in [A
 - **Verify**: `bun test server`
 - **Config**: `ROLL_ORIGIN`, `ROLL_DATA`, `ROLL_LIBRARY`, `ROLL_DIST`, `ROLL_PORT`, `ROLL_SCAN_MINUTES`, `ROLL_WORKERS`, `ROLL_RESERVE_GB`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`
 - **Secrets**: the OTLP header lives in `/etc/roll/env` on the server.
-- **Limits**: Search covers dates only so far.
+- **Limits**: Search covers dates, towns and countries so far; meaning, people and text in photos come later.
 
 ## Development
 

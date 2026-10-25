@@ -1,18 +1,21 @@
 // The signed-in user's photos: the timeline and each photo's files. Every
 // lookup is by id and user together, so one user never reaches another's.
-import { join } from "node:path"
+import { rm, unlink } from "node:fs/promises"
+import { basename, join } from "node:path"
 import type { Config } from "./config"
 import type { Db, Photo, User } from "./db"
 import { HttpError, fileResponse, json } from "./http"
 import type { createLibrary } from "./library"
-import { resolveExisting } from "./paths"
+import { log } from "./otel"
+import { ensureDir, linkFree, resolveExisting, userRoot } from "./paths"
+import type { Places } from "./places"
 import { parseDateQuery } from "./search"
 
 const PAGE = 120
 const MAX_PAGE = 500
 const ID = /^[A-Za-z0-9_-]{12}$/
 
-export function view(photo: Photo) {
+export function view(photo: Photo, places?: Places) {
   return {
     id: photo.id,
     kind: photo.kind,
@@ -21,23 +24,59 @@ export function view(photo: Photo) {
     height: photo.height,
     duration: photo.duration,
     live: photo.live_path !== null,
+    place: places?.label(photo.place_id) ?? null,
     v: photo.version,
   }
 }
 
-export function createPhotos(config: Config, db: Db, library: ReturnType<typeof createLibrary>) {
+// One search box: each word is a date, a town or a country, and every word
+// must match. A word that is none of these matches nothing for now; meaning
+// (semantic search) comes next.
+export function searchClause(q: string, places: Places) {
+  const where: string[] = []
+  const args: (string | number)[] = []
+  const add = (word: string) => {
+    const range = parseDateQuery(word)
+    if (range) {
+      where.push("taken_at >= ?", "taken_at < ?")
+      args.push(range.from, range.to)
+      return true
+    }
+    const country = places.country(word)
+    if (country) {
+      where.push("country = ?")
+      args.push(country)
+      return true
+    }
+    const towns = places.towns(word)
+    if (towns.length) {
+      where.push(`place_id in (${towns.map(() => "?").join(",")})`)
+      args.push(...towns)
+      return true
+    }
+    return false
+  }
+  // The whole query first ("2026 年 4 月" is one date), then word by word.
+  if (add(q)) return { where, args }
+  where.length = 0
+  args.length = 0
+  for (const word of q.split(/\s+/).filter(Boolean)) if (!add(word)) return null
+  return { where, args }
+}
+
+export function createPhotos(config: Config, db: Db, library: ReturnType<typeof createLibrary>, places: Places) {
   function timeline(user: User, url: URL) {
     const limit = Math.min(MAX_PAGE, Math.max(1, Number(url.searchParams.get("limit")) || PAGE))
     // The cursor is the last item's time and id: "<ms>_<id>".
     const cursor = /^(\d+)_([A-Za-z0-9_-]{12})$/.exec(url.searchParams.get("cursor") ?? "")
     const q = url.searchParams.get("q")?.slice(0, 100) ?? ""
-    const range = q ? parseDateQuery(q) : null
-    if (q && !range) return json({ items: [], next: null })
     const where = ["user_id = ?", "status = 'ready'"]
     const args: (string | number)[] = [user.id]
-    if (range) {
-      where.push("taken_at >= ?", "taken_at < ?")
-      args.push(range.from, range.to)
+    if (q) {
+      const clause = searchClause(q, places)
+      if (!clause) return json({ items: [], next: null })
+      where.push(...clause.where)
+      args.push(...clause.args)
     }
     if (cursor) {
       where.push("(taken_at < ? or (taken_at = ? and id < ?))")
@@ -47,7 +86,7 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
     const more = rows.length > limit
     const items = rows.slice(0, limit)
     const last = items.at(-1)
-    return json({ items: items.map(view), next: more && last ? `${last.taken_at}_${last.id}` : null })
+    return json({ items: items.map(photo => view(photo, places)), next: more && last ? `${last.taken_at}_${last.id}` : null })
   }
 
   function find(user: User, id: string) {
@@ -80,7 +119,31 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
     return fileResponse(req, path, name, file.size, req.method === "GET" && new URL(req.url).searchParams.get("dl") === "1").response
   }
 
+  // Delete moves the original (and its Live Photo video) into
+  // <user>/.trash/<day>/, which scans skip. Nothing is unlinked until a
+  // second name for it exists in the trash.
+  async function remove(user: User, id: string) {
+    const photo = find(user, id)
+    const root = await userRoot(config.library, user.id)
+    const day = new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10)
+    const trash = await ensureDir(root, `.trash/${day}`)
+    for (const rel of [photo.path, photo.live_path]) {
+      if (!rel) continue
+      const source = await resolveExisting(root, rel).catch(() => null)
+      if (!source) continue
+      await linkFree(source, trash, basename(rel))
+      await unlink(source)
+    }
+    db.query("delete from photos where id = ? and user_id = ?").run(photo.id, user.id)
+    await rm(library.cacheDir(photo.id), { recursive: true, force: true })
+    log("photo.deleted", { user: user.id, id: photo.id.slice(0, 4), live: photo.live_path !== null })
+    return json({ ok: true })
+  }
+
   async function handle(req: Request, url: URL, user: User): Promise<Response> {
+    if (url.pathname === "/api/photos/pending" && req.method === "GET") return json(library.pending(user.id))
+    const target = /^\/api\/photos\/([^/]+)$/.exec(url.pathname)
+    if (req.method === "DELETE" && target) return remove(user, target[1])
     if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405)
     if (url.pathname === "/api/photos") return timeline(user, url)
     const match = /^\/api\/photos\/([^/]+)\/(thumb|large|original|live)$/.exec(url.pathname)
@@ -88,7 +151,7 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
     const one = /^\/api\/photos\/([^/]+)$/.exec(url.pathname)
     if (one) {
       const photo = find(user, one[1])
-      return json({ ...view(photo), name: photo.path.split("/").pop(), size: photo.size, lat: photo.lat, lon: photo.lon })
+      return json({ ...view(photo, places), name: photo.path.split("/").pop(), size: photo.size, lat: photo.lat, lon: photo.lon })
     }
     throw new HttpError(404)
   }

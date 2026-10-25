@@ -29,6 +29,8 @@ export type Photo = {
   lat: number | null
   lon: number | null
   live_path: string | null
+  place_id: number | null
+  country: string | null
   status: "ready" | "failed"
   version: number
 }
@@ -84,6 +86,11 @@ export function openDb(path: string) {
     );
     create index if not exists photos_timeline on photos(user_id, status, taken_at desc, id desc);
   `)
+  // Added after launch: the nearest town and its country.
+  const columns = new Set((db.query("pragma table_info(photos)").all() as { name: string }[]).map(c => c.name))
+  if (!columns.has("place_id")) db.exec("alter table photos add column place_id integer")
+  if (!columns.has("country")) db.exec("alter table photos add column country text")
+  db.exec("create index if not exists photos_place on photos(user_id, place_id)")
   return db
 }
 

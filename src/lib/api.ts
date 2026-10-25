@@ -6,6 +6,7 @@ export type Photo = {
   height: number
   duration: number | null
   live: boolean
+  place: string | null
   v: number
 }
 

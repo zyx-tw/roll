@@ -9,6 +9,7 @@ import { createLibrary } from "./library"
 import { log } from "./otel"
 import { cleanRel, within } from "./paths"
 import { createPhotos } from "./photos"
+import { loadPlaces } from "./places"
 import { createUpload } from "./upload"
 
 const APP_CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
@@ -17,8 +18,9 @@ export function createApp(config: Config) {
   for (const dir of [config.data, config.library, config.cache, config.tmp]) mkdirSync(dir, { recursive: true })
   const db = openDb(join(config.data, "roll.db"))
   const auth = createAuth(config, db)
-  const library = createLibrary(config, db)
-  const photos = createPhotos(config, db, library)
+  const places = loadPlaces(config.geonames)
+  const library = createLibrary(config, db, places)
+  const photos = createPhotos(config, db, library, places)
   const upload = createUpload(config, library)
   const host = new URL(config.origin).host
 

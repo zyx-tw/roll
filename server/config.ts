@@ -11,6 +11,7 @@ export type Config = {
   scanMinutes: number
   workers: number
   reserveBytes: number
+  geonames: string
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -27,6 +28,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     scanMinutes: Number(env.ROLL_SCAN_MINUTES ?? 15),
     workers: Number(env.ROLL_WORKERS ?? 2),
     // Disk space an upload must leave free, for the database, previews and the other user.
+    // GeoNames cities1000.txt; without it, no place names.
+    geonames: resolve(env.ROLL_GEONAMES ?? join(data, "geo/cities1000.txt")),
     reserveBytes: Number(env.ROLL_RESERVE_GB ?? 10) * 1024 ** 3,
   }
 }

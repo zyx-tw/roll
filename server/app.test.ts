@@ -8,6 +8,8 @@ import { createInvite } from "./auth"
 import { loadConfig } from "./config"
 import { exifTime, readMeta } from "./library"
 import { parseDateQuery } from "./search"
+import { loadPlaces } from "./places"
+import { searchClause } from "./photos"
 
 const ROLL = "http://roll.test"
 let dir: string
@@ -308,4 +310,48 @@ test("an upload that would eat the reserve is refused", async () => {
   const tight = createApp(loadConfig({ ROLL_DATA: join(dir, "data"), ROLL_DIST: join(dir, "dist"), ROLL_ORIGIN: ROLL, ROLL_RESERVE_GB: "1000000" }))
   const res = await tight.fetch(new Request(`${ROLL}/api/upload?name=big.jpg`, { method: "PUT", body: "x", headers: { host: "roll.test", origin: ROLL, cookie: cookies.ann } }))
   expect(res.status).toBe(507)
+})
+
+describe("places", () => {
+  const places = loadPlaces(join(import.meta.dir, "fixtures/cities.txt"))
+  test("GPS turns into the nearest town, not one too far away", () => {
+    expect(places.nearest(35.01, 135.76)?.label).toBe("京都")
+    expect(places.nearest(25.03, 121.56)?.label).toBe("台北")
+    expect(places.nearest(30, 140)).toBeNull()
+  })
+  test("names in any language find the town, country names find the country", () => {
+    expect(places.towns("京都")).toEqual([1857910])
+    expect(places.towns("kyoto")).toEqual([1857910])
+    expect(places.towns("京都市")).toEqual([1857910])
+    expect(places.country("日本")).toBe("JP")
+    expect(places.country("Japan")).toBe("JP")
+    expect(places.country("台灣")).toBe("TW")
+  })
+  test("one box: dates, towns and countries together, every word must match", () => {
+    expect(searchClause("京都 4/15", places)?.where).toHaveLength(3)
+    expect(searchClause("日本", places)?.args).toEqual(["JP"])
+    expect(searchClause("2026 年 4 月", places)?.where).toHaveLength(2)
+    expect(searchClause("京都 拉麵", places)).toBeNull()
+  })
+})
+
+describe("delete", () => {
+  test("moves the original and its live video into the trash, never another user's", async () => {
+    const lib = join(dir, "data/library")
+    const live = (await body(req("/api/photos", { as: "ann" }))).items.find((p: { live: boolean }) => p.live)
+    expect((await req(`/api/photos/${live.id}`, { method: "DELETE", as: "bob" })).status).toBe(404)
+    expect((await req(`/api/photos/${live.id}`, { method: "DELETE", as: "ann", headers: { origin: "http://evil.test" } })).status).toBe(403)
+    expect((await req(`/api/photos/${live.id}`, { method: "DELETE", as: "ann" })).status).toBe(200)
+    const trashed = await Array.fromAsync(new Bun.Glob(".trash/*/*").scan({ cwd: join(lib, "ann"), dot: true }))
+    expect(trashed.map(p => p.split("/").pop()).sort()).toEqual(["IMG_0001.jpg", "IMG_0001.mov"])
+    expect((await body(req("/api/photos", { as: "ann" }))).items.find((p: { id: string }) => p.id === live.id)).toBeUndefined()
+    expect((await req(`/api/photos/${live.id}/thumb`, { as: "ann" })).status).toBe(404)
+    // A scan does not bring it back from the trash.
+    await app.library.scan()
+    await app.library.drained()
+    expect((await body(req("/api/photos", { as: "ann" }))).items.find((p: { live: boolean }) => p.live)).toBeUndefined()
+  })
+  test("pending counts this user's files still waiting for previews", async () => {
+    expect(await body(req("/api/photos/pending", { as: "ann" }))).toEqual({ files: 0, scanning: false })
+  })
 })
