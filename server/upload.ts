@@ -80,7 +80,9 @@ export function createUpload(config: Config, library: ReturnType<typeof createLi
           await link(part, dest)
           // Check again where it landed, in case a folder was swapped meanwhile.
           if (!within(realRoot, await realpath(dirname(dest)))) {
-            await unlink(dest)
+            // Remove only our own link: same inode as the .part file.
+            const [mine, there] = await Promise.all([lstat(part), lstat(dest).catch(() => null)])
+            if (there && there.ino === mine.ino && there.dev === mine.dev) await unlink(dest)
             throw new HttpError(404)
           }
           log("upload.done", { user: user.id, bytes: length, kind: VIDEO.has(ext.toLowerCase()) ? "video" : "image" })
