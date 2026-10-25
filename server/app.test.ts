@@ -343,7 +343,7 @@ describe("delete", () => {
     expect((await req(`/api/photos/${live.id}`, { method: "DELETE", as: "ann", headers: { origin: "http://evil.test" } })).status).toBe(403)
     expect((await req(`/api/photos/${live.id}`, { method: "DELETE", as: "ann" })).status).toBe(200)
     const trashed = await Array.fromAsync(new Bun.Glob(".trash/*/*").scan({ cwd: join(lib, "ann"), dot: true }))
-    expect(trashed.map(p => p.split("/").pop()).sort()).toEqual(["IMG_0001.jpg", "IMG_0001.mov"])
+    expect(trashed.map(p => p.split("/").pop()).sort()).toEqual([`${live.id}-IMG_0001.jpg`, `${live.id}-IMG_0001.mov`])
     expect((await body(req("/api/photos", { as: "ann" }))).items.find((p: { id: string }) => p.id === live.id)).toBeUndefined()
     expect((await req(`/api/photos/${live.id}/thumb`, { as: "ann" })).status).toBe(404)
     // A scan does not bring it back from the trash.
@@ -353,5 +353,37 @@ describe("delete", () => {
   })
   test("pending counts this user's files still waiting for previews", async () => {
     expect(await body(req("/api/photos/pending", { as: "ann" }))).toEqual({ files: 0, scanning: false })
+  })
+})
+
+describe("review fixes, delete", () => {
+  test("a photo that became a link is not deleted through it", async () => {
+    const lib = join(dir, "data/library")
+    const items = (await body(req("/api/photos", { as: "ann" }))).items
+    const row = app.db.query("select id, path from photos where user_id = 'ann' and path like '2025/%' limit 1").get() as { id: string; path: string }
+    const other = app.db.query("select path from photos where user_id = 'ann' and id != ? and kind = 'image' limit 1").get(row.id) as { path: string }
+    rmSync(join(lib, "ann", row.path))
+    symlinkSync(join(lib, "ann", other.path), join(lib, "ann", row.path))
+    expect((await req(`/api/photos/${row.id}`, { method: "DELETE", as: "ann" })).status).toBe(409)
+    expect(await Bun.file(join(lib, "ann", other.path)).exists()).toBe(true)
+    expect(items.length).toBeGreaterThan(1)
+  })
+  test("a preview job for a deleted photo writes nothing back", async () => {
+    const lib = join(dir, "data/library")
+    await photo(join(lib, "ann/late.jpg"), "2025:08:01 10:00:00")
+    const scanning = app.library.scan()
+    await scanning
+    const row = app.db.query("select id from photos where path = 'late.jpg'").get() as { id: string } | null
+    // Whether or not the render already finished, deleting wins.
+    if (row) {
+      expect((await req(`/api/photos/${row.id}`, { method: "DELETE", as: "ann" })).status).toBe(200)
+      await app.library.drained()
+      expect(app.db.query("select id from photos where id = ?").get(row.id)).toBeNull()
+    }
+  })
+  test("the longest run of words is read first", () => {
+    const places = loadPlaces(join(import.meta.dir, "fixtures/cities.txt"))
+    expect(searchClause("京都 2026 年 4 月", places)?.where).toHaveLength(3)
+    expect(searchClause("京都 拉麵", places)).toBeNull()
   })
 })

@@ -94,6 +94,8 @@ export async function walk(root: string): Promise<Found[]> {
 export function createLibrary(config: Config, db: Db, places: Places) {
   const queue: { userId: string; found: Found; meta: Meta; id: string; version: number }[] = []
   let running = 0
+  // Photos deleted while a preview job for them may still be queued or running.
+  const forgotten = new Set<string>()
   // Files being rendered right now, per user, for the upload status.
   const busy = new Map<string, number>()
   let scanning: Promise<void> | null = null
@@ -134,6 +136,7 @@ export function createLibrary(config: Config, db: Db, places: Places) {
 
   async function process(job: (typeof queue)[number]) {
     const { userId, found, meta, id, version } = job
+    if (forgotten.has(id)) return
     let status: Photo["status"] = "ready"
     let size = { width: 0, height: 0 }
     try {
@@ -145,6 +148,11 @@ export function createLibrary(config: Config, db: Db, places: Places) {
       status = "failed"
       // Tool errors quote the file path, so only the tool and its exit code go out.
       log("library.render_failed", { id: id.slice(0, 4), kind: found.kind, error: /^Error: (\S+ exited \d+)/.exec(String(error))?.[1] ?? "error" }, "WARN")
+    }
+    // Deleted during the render: drop what it made and write no row.
+    if (forgotten.has(id)) {
+      await rm(cacheDir(id), { recursive: true, force: true })
+      return
     }
     const town = meta.lat !== null && meta.lon !== null ? places.nearest(meta.lat, meta.lon) : null
     db.query(
@@ -250,5 +258,10 @@ export function createLibrary(config: Config, db: Db, places: Places) {
     scanning: scanning !== null,
   })
 
-  return { scan, drained, file, cacheDir, pending }
+  function forget(id: string) {
+    forgotten.add(id)
+    for (let i = queue.length - 1; i >= 0; i--) if (queue[i].id === id) queue.splice(i, 1)
+  }
+
+  return { scan, drained, file, cacheDir, pending, forget }
 }

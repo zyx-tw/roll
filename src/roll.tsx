@@ -293,16 +293,17 @@ function Viewer({ photos, index, onIndex, onClose, onDeleted }: { photos: Photo[
   // The Live Photo that plays, by id, so moving on stops it.
   const [liveId, setLiveId] = useState<string | null>(null)
   const playingLive = liveId === photo.id
-  const [confirming, setConfirming] = useState(false)
+  // The photo the delete dialog was opened for, so nothing else can be deleted.
+  const [confirming, setConfirming] = useState<Photo | null>(null)
   const [deleting, setDeleting] = useState(false)
   const touch = useRef<{ x: number; y: number } | null>(null)
 
-  async function remove() {
+  async function remove(target: Photo) {
     setDeleting(true)
     try {
-      await api(`/api/photos/${photo.id}`, { method: "DELETE" })
-      setConfirming(false)
-      onDeleted(photo.id)
+      await api(`/api/photos/${target.id}`, { method: "DELETE" })
+      setConfirming(null)
+      onDeleted(target.id)
     } catch {
       toast.error("刪除失敗")
     } finally {
@@ -352,7 +353,7 @@ function Viewer({ photos, index, onIndex, onClose, onDeleted }: { photos: Photo[
       aria-modal="true"
       aria-label={formatTaken(photo.takenAt)}
       className="fixed inset-0 z-70 flex flex-col bg-background"
-      onTouchStart={event => (touch.current = { x: event.touches[0].clientX, y: event.touches[0].clientY })}
+      onTouchStart={event => (touch.current = confirming ? null : { x: event.touches[0].clientX, y: event.touches[0].clientY })}
       onTouchEnd={event => {
         const start = touch.current
         touch.current = null
@@ -370,7 +371,7 @@ function Viewer({ photos, index, onIndex, onClose, onDeleted }: { photos: Photo[
           {photo.place && <span className="text-muted-foreground">，{photo.place}</span>}
         </p>
         <div className="absolute top-5 right-5 -my-3 -mr-3 flex items-center">
-          <Button variant="ghost" size="icon" onClick={() => setConfirming(true)} aria-label="刪除" title="刪除">
+          <Button variant="ghost" size="icon" onClick={() => setConfirming(photo)} aria-label="刪除" title="刪除">
             <Trash2 aria-hidden />
           </Button>
           <Button variant="ghost" size="icon" render={<a href={`${media(photo, "original")}&dl=1`} />} aria-label="下載" title="下載">
@@ -407,14 +408,14 @@ function Viewer({ photos, index, onIndex, onClose, onDeleted }: { photos: Photo[
           </Button>
         )}
       </div>
-      <AlertDialog open={confirming} onOpenChange={next => !next && setConfirming(false)}>
+      <AlertDialog open={confirming !== null} onOpenChange={next => !next && setConfirming(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>刪除這{photo.kind === "video" ? "部影片" : "張照片"}？</AlertDialogTitle>
+            <AlertDialogTitle>刪除這{confirming?.kind === "video" ? "部影片" : "張照片"}？</AlertDialogTitle>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
-            <Button variant="destructive" onClick={remove} disabled={deleting}>刪除</Button>
+            <Button variant="destructive" onClick={() => confirming && remove(confirming)} disabled={deleting}>刪除</Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

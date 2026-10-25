@@ -75,7 +75,7 @@ Facts for coding agents and LLM tools. The rules for changing the code are in [A
 - **Install**: `bun install`, plus `exiftool`, `vips` with HEIF and `ffmpeg` on the host
 - **Run**: `bun run start`
 - **Verify**: `bun test server`
-- **Config**: `ROLL_ORIGIN`, `ROLL_DATA`, `ROLL_LIBRARY`, `ROLL_DIST`, `ROLL_PORT`, `ROLL_SCAN_MINUTES`, `ROLL_WORKERS`, `ROLL_RESERVE_GB`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`
+- **Config**: `ROLL_ORIGIN`, `ROLL_DATA`, `ROLL_LIBRARY`, `ROLL_DIST`, `ROLL_PORT`, `ROLL_SCAN_MINUTES`, `ROLL_WORKERS`, `ROLL_RESERVE_GB`, `ROLL_GEONAMES`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`
 - **Secrets**: the OTLP header lives in `/etc/roll/env` on the server.
 - **Limits**: Search covers dates, towns and countries so far; meaning, people and text in photos come later.
 

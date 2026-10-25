@@ -1,13 +1,13 @@
 // The signed-in user's photos: the timeline and each photo's files. Every
 // lookup is by id and user together, so one user never reaches another's.
-import { rm, unlink } from "node:fs/promises"
-import { basename, join } from "node:path"
+import { lstat, rename, rm } from "node:fs/promises"
+import { basename, dirname, join } from "node:path"
 import type { Config } from "./config"
 import type { Db, Photo, User } from "./db"
 import { HttpError, fileResponse, json } from "./http"
 import type { createLibrary } from "./library"
 import { log } from "./otel"
-import { ensureDir, linkFree, resolveExisting, userRoot } from "./paths"
+import { ensureDir, resolveExisting, userRoot } from "./paths"
 import type { Places } from "./places"
 import { parseDateQuery } from "./search"
 
@@ -56,11 +56,15 @@ export function searchClause(q: string, places: Places) {
     }
     return false
   }
-  // The whole query first ("2026 年 4 月" is one date), then word by word.
-  if (add(q)) return { where, args }
-  where.length = 0
-  args.length = 0
-  for (const word of q.split(/\s+/).filter(Boolean)) if (!add(word)) return null
+  // Take the longest run of words that means something ("2026 年 4 月" is
+  // one date), then go on after it. Every run must mean something.
+  const words = q.split(/\s+/).filter(Boolean)
+  for (let i = 0; i < words.length; ) {
+    let j = words.length
+    while (j > i && !add(words.slice(i, j).join(" "))) j--
+    if (j === i) return null
+    i = j
+  }
   return { where, args }
 }
 
@@ -120,19 +124,27 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
   }
 
   // Delete moves the original (and its Live Photo video) into
-  // <user>/.trash/<day>/, which scans skip. Nothing is unlinked until a
-  // second name for it exists in the trash.
+  // <user>/.trash/<day>/, which scans skip, in one rename each: the file is
+  // never without a name. Only a plain file is moved, never through a link.
   async function remove(user: User, id: string) {
     const photo = find(user, id)
     const root = await userRoot(config.library, user.id)
     const day = new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10)
     const trash = await ensureDir(root, `.trash/${day}`)
+    // Stop any preview job for it from writing the row back.
+    library.forget(photo.id)
     for (const rel of [photo.path, photo.live_path]) {
       if (!rel) continue
-      const source = await resolveExisting(root, rel).catch(() => null)
-      if (!source) continue
-      await linkFree(source, trash, basename(rel))
-      await unlink(source)
+      const parent = await resolveExisting(root, dirname(rel) === "." ? "" : dirname(rel)).catch(() => null)
+      if (!parent) continue
+      const source = join(parent, basename(rel))
+      const info = await lstat(source).catch(() => null)
+      if (!info) continue
+      if (!info.isFile()) throw new HttpError(409, "not a plain file")
+      // The photo id makes the trash name unique; a suffix covers a repeat.
+      let dest = join(trash, `${photo.id}-${basename(rel)}`)
+      for (let i = 1; await lstat(dest).then(() => true, () => false); i++) dest = join(trash, `${photo.id}-${i}-${basename(rel)}`)
+      await rename(source, dest)
     }
     db.query("delete from photos where id = ? and user_id = ?").run(photo.id, user.id)
     await rm(library.cacheDir(photo.id), { recursive: true, force: true })
