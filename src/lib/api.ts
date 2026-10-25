@@ -32,13 +32,23 @@ export const post = <T>(path: string, body: unknown) => api<T>(path, { method: "
 const CHUNK = 8 * 1024 ** 2
 const MAX_TRIES = 12
 
-// Sends one chunk; progress counts bytes of this chunk only.
+const STALL_MS = 60_000
+
+// Sends one chunk; progress counts bytes of this chunk only. A slow link is
+// fine; a chunk that makes no progress for a minute is given up and retried.
 function sendChunk(id: string, offset: number, blob: Blob, onBytes: (loaded: number) => void) {
   return new Promise<{ received: number; name?: string }>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
+    let stall = setTimeout(() => xhr.abort(), STALL_MS)
+    const done = () => clearTimeout(stall)
     xhr.open("PUT", `/api/upload/${id}?offset=${offset}`)
-    xhr.upload.onprogress = event => onBytes(event.loaded)
+    xhr.upload.onprogress = event => {
+      clearTimeout(stall)
+      stall = setTimeout(() => xhr.abort(), STALL_MS)
+      onBytes(event.loaded)
+    }
     xhr.onload = () => {
+      done()
       let body: { received?: number; name?: string; error?: string } = {}
       try {
         body = JSON.parse(xhr.responseText)
@@ -48,9 +58,11 @@ function sendChunk(id: string, offset: number, blob: Blob, onBytes: (loaded: num
       if (xhr.status < 300) resolve({ received: body.received ?? offset + blob.size, name: body.name })
       else reject(Object.assign(new ApiError(xhr.status, body.error ?? String(xhr.status)), { received: body.received }))
     }
-    xhr.onerror = () => reject(new ApiError(0, "network"))
-    xhr.ontimeout = () => reject(new ApiError(0, "timeout"))
-    xhr.timeout = 120_000
+    xhr.onerror = () => {
+      done()
+      reject(new ApiError(0, "network"))
+    }
+    xhr.onabort = () => reject(new ApiError(0, "stalled"))
     xhr.send(blob)
   })
 }

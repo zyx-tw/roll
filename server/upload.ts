@@ -108,6 +108,8 @@ export function createUpload(config: Config, library: ReturnType<typeof createLi
     const root = await userRoot(config.library, user.id)
     const realRoot = await realpath(root)
     const folder = await ensureDir(root, `uploads/${month(Date.now())}`)
+    // The file on disk must be exactly what the client sent, no more.
+    if ((await lstat(entry.part)).size !== entry.size) throw new HttpError(500, "size mismatch")
     if (entry.modified) await utimes(entry.part, new Date(), new Date(entry.modified))
     // linkFree never overwrites: a name already there gets a suffix.
     const final = await linkFree(entry.part, folder, entry.name)
