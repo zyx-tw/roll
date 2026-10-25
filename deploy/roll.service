@@ -1,0 +1,21 @@
+[Unit]
+Description=roll photos and videos
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=roll
+Group=roll
+EnvironmentFile=/etc/roll/env
+WorkingDirectory=/opt/roll
+ExecStart=/usr/local/bin/bun /opt/roll/build/server.js
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/roll
+
+[Install]
+WantedBy=multi-user.target
