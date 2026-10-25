@@ -1,13 +1,13 @@
 // Upload: the original bytes, untouched, into library/<user>/uploads/<month>/.
 // roll only ever adds files here; it never changes or deletes an original.
-import { link, lstat, mkdir, realpath, statfs, unlink, utimes } from "node:fs/promises"
+import { lstat, realpath, statfs, unlink, utimes } from "node:fs/promises"
 import { dirname, extname, join } from "node:path"
 import type { Config } from "./config"
 import type { User } from "./db"
 import { HttpError, json } from "./http"
 import { IMAGE, VIDEO, newId, type createLibrary } from "./library"
 import { log } from "./otel"
-import { resolveExisting, within } from "./paths"
+import { ensureDir, linkFree, userRoot, within } from "./paths"
 
 const MAX_BYTES = 20 * 1024 ** 3
 
@@ -44,19 +44,9 @@ export function createUpload(config: Config, library: ReturnType<typeof createLi
     )
 
     const now = Date.now()
-    const root = join(config.library, user.id)
-    // The user folder must be a real folder, never a link to another one.
-    if (!(await lstat(root).catch(() => null))?.isDirectory()) throw new HttpError(404)
+    const root = await userRoot(config.library, user.id)
     const realRoot = await realpath(root)
-    // One level at a time, each checked before anything is made inside it, so
-    // a link in the path never leads a write into another folder.
-    let folder = root
-    for (const rel of ["uploads", `uploads/${month(now)}`]) {
-      await mkdir(join(root, rel)).catch(error => {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
-      })
-      folder = await resolveExisting(root, rel)
-    }
+    const folder = await ensureDir(root, `uploads/${month(now)}`)
     const space = await statfs(config.tmp)
     if (space.bavail * space.bsize < (declared !== null ? Number(declared) : 0) + config.reserveBytes) {
       log("upload.no_space", { user: user.id }, "WARN")
@@ -70,28 +60,19 @@ export function createUpload(config: Config, library: ReturnType<typeof createLi
       if (written === 0 || written !== length || (declared !== null && written !== Number(declared))) throw new HttpError(400, "short body")
       const modified = Number(url.searchParams.get("modified"))
       if (Number.isFinite(modified) && modified > 0 && modified <= now) await utimes(part, new Date(), new Date(modified))
-      // link() refuses an existing name, so a name already there gets a suffix.
-      const stem = name.slice(0, name.length - extname(name).length)
-      const ext = extname(name)
-      for (let i = 0; ; i++) {
-        const final = i === 0 ? name : `${stem}_${i}${ext}`
-        try {
-          const dest = join(folder, final)
-          await link(part, dest)
-          // Check again where it landed, in case a folder was swapped meanwhile.
-          if (!within(realRoot, await realpath(dirname(dest)))) {
-            // Remove only our own link: same inode as the .part file.
-            const [mine, there] = await Promise.all([lstat(part), lstat(dest).catch(() => null)])
-            if (there && there.ino === mine.ino && there.dev === mine.dev) await unlink(dest)
-            throw new HttpError(404)
-          }
-          log("upload.done", { user: user.id, bytes: length, kind: VIDEO.has(ext.toLowerCase()) ? "video" : "image" })
-          void library.scan()
-          return json({ ok: true, name: final })
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "EEXIST" || i >= 999) throw error
-        }
+      // linkFree never overwrites: a name already there gets a suffix.
+      const final = await linkFree(part, folder, name)
+      const dest = join(folder, final)
+      // Check again where it landed, in case a folder was swapped meanwhile.
+      if (!within(realRoot, await realpath(dirname(dest)))) {
+        // Remove only our own link: same inode as the .part file.
+        const [mine, there] = await Promise.all([lstat(part), lstat(dest).catch(() => null)])
+        if (there && there.ino === mine.ino && there.dev === mine.dev) await unlink(dest)
+        throw new HttpError(404)
       }
+      log("upload.done", { user: user.id, bytes: length, kind: VIDEO.has(extname(name).toLowerCase()) ? "video" : "image" })
+      void library.scan()
+      return json({ ok: true, name: final })
     } finally {
       await unlink(part).catch(() => {})
     }

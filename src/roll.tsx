@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser"
-import { ChevronLeft, ChevronRight, Download, LogOut, Play, Search, Upload, X } from "lucide-react"
+import { ChevronLeft, ChevronRight, Download, LogOut, Play, Search, Trash2, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { TaskShell } from "@/components/task-shell"
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -72,21 +73,34 @@ export function RollApp() {
   async function send(files: File[]) {
     const media = files.filter(file => /^(image|video)\//.test(file.type) || /\.(heic|heif|dng|mov|mp4|m4v)$/i.test(file.name))
     if (media.length === 0) return
-    const id = toast.loading(`上傳 0/${media.length}`)
+    const id = toast.loading(`上傳中 0/${media.length}`)
     let done = 0
     let failed = 0
     for (const file of media) {
       try {
-        await uploadFile(file, fraction => toast.loading(`上傳 ${done + 1}/${media.length}，${Math.round(fraction * 100)}%`, { id }))
+        await uploadFile(file, fraction => toast.loading(`上傳中 ${done + 1}/${media.length}，${Math.round(fraction * 100)}%`, { id }))
         done++
       } catch {
         failed++
       }
     }
-    if (failed) toast.error(`${failed} 個上傳失敗`, { id })
+    if (done === 0) {
+      toast.error(`${failed} 個上傳失敗`, { id })
+      return
+    }
+    // Uploaded is not done: the server still makes the previews.
+    let left = Infinity
+    for (;;) {
+      const pending = await api<{ files: number; scanning: boolean }>("/api/photos/pending").catch(() => ({ files: 0, scanning: false }))
+      if (pending.files < left) setReload(n => n + 1)
+      left = pending.files
+      if (left === 0 && !pending.scanning) break
+      toast.loading(left > 0 ? `處理中，剩 ${left} 個` : "處理中", { id })
+      await new Promise(resolve => setTimeout(resolve, 1500))
+    }
+    setReload(n => n + 1)
+    if (failed) toast.error(`已上傳 ${done} 個，${failed} 個失敗`, { id })
     else toast.success(`已上傳 ${done} 個`, { id })
-    // The server renders in the background; look again as previews land.
-    for (const wait of [2000, 6000, 15000, 40000]) setTimeout(() => setReload(n => n + 1), wait)
   }
 
   // Files dropped anywhere on the page upload.
@@ -257,6 +271,12 @@ function Timeline({ query, onSignedOut }: { query: string; onSignedOut: () => vo
         <Viewer
           photos={photos}
           index={open}
+          onDeleted={id => {
+            const at = photos.findIndex(p => p.id === id)
+            const rest = photos.filter(p => p.id !== id)
+            setPhotos(rest)
+            setOpen(rest.length === 0 ? null : Math.min(at, rest.length - 1))
+          }}
           onIndex={index => {
             setOpen(index)
             if (index >= photos.length - 10) void load()
@@ -268,12 +288,28 @@ function Timeline({ query, onSignedOut }: { query: string; onSignedOut: () => vo
   )
 }
 
-function Viewer({ photos, index, onIndex, onClose }: { photos: Photo[]; index: number; onIndex: (index: number) => void; onClose: () => void }) {
+function Viewer({ photos, index, onIndex, onClose, onDeleted }: { photos: Photo[]; index: number; onIndex: (index: number) => void; onClose: () => void; onDeleted: (id: string) => void }) {
   const photo = photos[index]
   // The Live Photo that plays, by id, so moving on stops it.
   const [liveId, setLiveId] = useState<string | null>(null)
   const playingLive = liveId === photo.id
+  // The photo the delete dialog was opened for, so nothing else can be deleted.
+  const [confirming, setConfirming] = useState<Photo | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const touch = useRef<{ x: number; y: number } | null>(null)
+
+  async function remove(target: Photo) {
+    setDeleting(true)
+    try {
+      await api(`/api/photos/${target.id}`, { method: "DELETE" })
+      setConfirming(null)
+      onDeleted(target.id)
+    } catch {
+      toast.error("刪除失敗")
+    } finally {
+      setDeleting(false)
+    }
+  }
   const closeButton = useRef<HTMLButtonElement>(null)
 
   const go = useCallback(
@@ -297,13 +333,14 @@ function Viewer({ photos, index, onIndex, onClose }: { photos: Photo[]; index: n
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (confirming) return
       if (event.key === "Escape") onClose()
       else if (event.key === "ArrowLeft") go(-1)
       else if (event.key === "ArrowRight") go(1)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [go, onClose])
+  }, [go, onClose, confirming])
 
   // Warm the neighbours, so the next swipe shows at once.
   useEffect(() => {
@@ -316,7 +353,7 @@ function Viewer({ photos, index, onIndex, onClose }: { photos: Photo[]; index: n
       aria-modal="true"
       aria-label={formatTaken(photo.takenAt)}
       className="fixed inset-0 z-70 flex flex-col bg-background"
-      onTouchStart={event => (touch.current = { x: event.touches[0].clientX, y: event.touches[0].clientY })}
+      onTouchStart={event => (touch.current = confirming ? null : { x: event.touches[0].clientX, y: event.touches[0].clientY })}
       onTouchEnd={event => {
         const start = touch.current
         touch.current = null
@@ -327,9 +364,16 @@ function Viewer({ photos, index, onIndex, onClose }: { photos: Photo[]; index: n
         else if (dy > 80 && Math.abs(dy) > Math.abs(dx)) onClose()
       }}
     >
-      <header className="flex items-center justify-between gap-4 px-5 py-4">
-        <p className="text-body tabular-nums">{formatTaken(photo.takenAt)}</p>
-        <div className="flex items-center gap-2">
+      {/* Same geometry as the page's top corners: 20px in, 24px line, buttons pulled by their padding. */}
+      <header className="relative flex items-center justify-between gap-4 py-5 pr-48 pl-5">
+        <p className="text-body tabular-nums">
+          {formatTaken(photo.takenAt)}
+          {photo.place && <span className="text-muted-foreground">，{photo.place}</span>}
+        </p>
+        <div className="absolute top-5 right-5 -my-3 -mr-3 flex items-center">
+          <Button variant="ghost" size="icon" onClick={() => setConfirming(photo)} aria-label="刪除" title="刪除">
+            <Trash2 aria-hidden />
+          </Button>
           <Button variant="ghost" size="icon" render={<a href={`${media(photo, "original")}&dl=1`} />} aria-label="下載" title="下載">
             <Download aria-hidden />
           </Button>
@@ -364,6 +408,17 @@ function Viewer({ photos, index, onIndex, onClose }: { photos: Photo[]; index: n
           </Button>
         )}
       </div>
+      <AlertDialog open={confirming !== null} onOpenChange={next => !next && setConfirming(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>刪除這{confirming?.kind === "video" ? "部影片" : "張照片"}？</AlertDialogTitle>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <Button variant="destructive" onClick={() => confirming && remove(confirming)} disabled={deleting}>刪除</Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

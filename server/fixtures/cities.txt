@@ -1,0 +1,3 @@
+1857910	Kyoto	Kyoto	Kyoto-shi,京都,京都市,きょうとし	35.02107	135.75385	P	PPLA	JP		22				1459640		50	Asia/Tokyo	2024-06-12
+1850147	Tokyo	Tokyo	Tokyo-to,東京,東京都	35.6895	139.69171	P	PPLC	JP		40				8336599		40	Asia/Tokyo	2024-01-01
+1668341	Taipei	Taipei	台北,臺北,台北市,臺北市	25.04776	121.53185	P	PPLC	TW		03				7871900		9	Asia/Taipei	2024-01-01
