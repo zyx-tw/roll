@@ -29,15 +29,90 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const post = <T>(path: string, body: unknown) => api<T>(path, { method: "POST", body: JSON.stringify(body) })
 
-export function uploadFile(file: File, onProgress: (fraction: number) => void) {
-  return new Promise<void>((resolve, reject) => {
+const CHUNK = 8 * 1024 ** 2
+const MAX_TRIES = 12
+
+// Sends one chunk; progress counts bytes of this chunk only.
+function sendChunk(id: string, offset: number, blob: Blob, onBytes: (loaded: number) => void) {
+  return new Promise<{ received: number; name?: string }>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
-    xhr.open("PUT", `/api/upload?name=${encodeURIComponent(file.name)}&modified=${file.lastModified}`)
-    xhr.upload.onprogress = event => event.lengthComputable && onProgress(event.loaded / event.total)
-    xhr.onload = () => (xhr.status < 300 ? resolve() : reject(new ApiError(xhr.status, xhr.responseText)))
+    xhr.open("PUT", `/api/upload/${id}?offset=${offset}`)
+    xhr.upload.onprogress = event => onBytes(event.loaded)
+    xhr.onload = () => {
+      let body: { received?: number; name?: string; error?: string } = {}
+      try {
+        body = JSON.parse(xhr.responseText)
+      } catch {
+        // Not JSON: a proxy page.
+      }
+      if (xhr.status < 300) resolve({ received: body.received ?? offset + blob.size, name: body.name })
+      else reject(Object.assign(new ApiError(xhr.status, body.error ?? String(xhr.status)), { received: body.received }))
+    }
     xhr.onerror = () => reject(new ApiError(0, "network"))
-    xhr.send(file)
+    xhr.ontimeout = () => reject(new ApiError(0, "timeout"))
+    xhr.timeout = 120_000
+    xhr.send(blob)
   })
+}
+
+// Waits until the page is on screen and the phone is online again.
+function backOnline(ms: number) {
+  return new Promise<void>(resolve => {
+    const check = () => {
+      if (document.visibilityState === "visible" && navigator.onLine) {
+        document.removeEventListener("visibilitychange", check)
+        window.removeEventListener("online", check)
+        clearTimeout(timer)
+        resolve()
+      }
+    }
+    const timer = setTimeout(() => {
+      document.addEventListener("visibilitychange", check)
+      window.addEventListener("online", check)
+      check()
+    }, ms)
+  })
+}
+
+// A transient failure: the network, a timeout, a chunk still being written, a restart or a busy server.
+const retryable = (error: unknown) => error instanceof ApiError && [0, 408, 409, 429].includes(error.status) || (error instanceof ApiError && error.status >= 500)
+
+// Uploads a file in chunks. A dropped connection or a phone that sleeps
+// resumes from the last chunk the server has, not from the start.
+export async function uploadFile(file: File, onProgress: (fraction: number, waiting: boolean) => void) {
+  const begin = () => post<{ id: string }>("/api/upload", { name: file.name, size: file.size, modified: file.lastModified }).then(r => r.id)
+  let id = await begin()
+  let received = 0
+  let tries = 0
+  while (received < file.size) {
+    try {
+      const result = await sendChunk(id, received, file.slice(received, received + CHUNK), loaded => onProgress((received + loaded) / file.size, false))
+      received = result.received
+      tries = 0
+    } catch (error) {
+      const told = (error as { received?: number }).received
+      // The server says where the file stands: carry on from there.
+      if (error instanceof ApiError && error.status === 409 && typeof told === "number") {
+        received = told
+        continue
+      }
+      // The server lost the upload, after a restart: start this file again.
+      if (error instanceof ApiError && error.status === 404) {
+        if (++tries > MAX_TRIES) throw error
+        id = await begin()
+        received = 0
+        continue
+      }
+      if (!retryable(error) || ++tries > MAX_TRIES) {
+        void api(`/api/upload/${id}`, { method: "DELETE" }).catch(() => {})
+        throw error
+      }
+      onProgress(received / file.size, true)
+      await backOnline(Math.min(1000 * 2 ** tries, 30_000))
+      const state = await api<{ received: number }>(`/api/upload/${id}`).catch(() => null)
+      if (state) received = state.received
+    }
+  }
 }
 
 const takenParts = new Intl.DateTimeFormat("zh-TW", { year: "numeric", month: "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Taipei" })

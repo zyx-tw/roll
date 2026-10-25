@@ -28,6 +28,20 @@ function req(path: string, init: RequestInit & { as?: string | null } = {}) {
 const body = async (res: Response | Promise<Response>): Promise<any> => (await res).json()
 const post = (path: string, value: unknown, as: string | null = null) => req(path, { method: "POST", body: JSON.stringify(value), as })
 
+// Starts an upload and sends it in chunks, as the app does.
+async function upload(name: string, bytes: Uint8Array | string, as: string | null = "ann", modified?: number, chunk = 4) {
+  const data = typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes
+  const started = await post("/api/upload", { name, size: data.byteLength, modified }, as)
+  if (!started.ok) return started
+  const { id } = (await started.json()) as { id: string }
+  let res = started
+  for (let at = 0; at < data.byteLength; at += chunk) {
+    res = await req(`/api/upload/${id}?offset=${at}`, { method: "PUT", body: data.slice(at, at + chunk), as })
+    if (!res.ok) return res
+  }
+  return res
+}
+
 function signIn(userId: string) {
   const token = `session-${userId}`
   app.db.query("insert into users (id, name, created_at) values (?, ?, 0) on conflict do nothing").run(userId, userId)
@@ -248,18 +262,18 @@ describe("date search", () => {
 })
 
 describe("upload", () => {
-  const put = (name: string, bytes: Uint8Array | string, as = "ann", extra = "") =>
-    req(`/api/upload?name=${encodeURIComponent(name)}${extra}`, { method: "PUT", body: bytes, as })
+  const put = (name: string, bytes: Uint8Array | string, as = "ann", modified?: number) => upload(name, bytes, as, modified, 4096)
   test("needs a session and a photo or video name", async () => {
-    expect((await req("/api/upload?name=a.jpg", { method: "PUT", body: "x" })).status).toBe(401)
+    expect((await post("/api/upload", { name: "a.jpg", size: 1 })).status).toBe(401)
     expect((await put("notes.txt", "x")).status).toBe(415)
     for (const bad of ["../a.jpg", "a/b.jpg", ".hidden.jpg", ""]) expect([400, 415]).toContain((await put(bad, "x")).status)
+    for (const size of [0, -1, 1.5, "1"]) expect((await post("/api/upload", { name: "a.jpg", size }, "ann")).status).toBe(400)
   })
   test("keeps the bytes, picks a free name and shows up after a scan", async () => {
     const src = join(dir, "data/library/ann/2025/a.jpg")
     const bytes = new Uint8Array(await Bun.file(src).arrayBuffer())
     const before = (await body(req("/api/photos", { as: "ann" }))).items.length
-    const first = await body(put("trip.jpg", bytes, "ann", "&modified=1700000000000"))
+    const first = await body(put("trip.jpg", bytes, "ann", 1700000000000))
     const second = await body(put("trip.jpg", bytes))
     expect(first.name).toBe("trip.jpg")
     expect(second.name).toBe("trip_1.jpg")
@@ -283,8 +297,51 @@ describe("upload", () => {
   })
 })
 
+describe("resumable upload", () => {
+  const start = async (name: string, size: number, as = "ann") => (await body(post("/api/upload", { name, size }, as))).id as string
+  const chunk = (id: string, offset: number, bytes: string, as = "ann") => req(`/api/upload/${id}?offset=${offset}`, { method: "PUT", body: bytes, as })
+  const found = async (name: string) => (await Array.fromAsync(new Bun.Glob(`uploads/*/${name}`).scan(join(dir, "data/library/ann")))).length
+
+  test("a chunk sent again, or one that skips ahead, is told where the file stands", async () => {
+    const id = await start("resume.mov", 6)
+    expect(await body(chunk(id, 0, "abc"))).toEqual({ received: 3 })
+    const again = await chunk(id, 0, "abc")
+    expect(again.status).toBe(409)
+    expect((await body(again)).received).toBe(3)
+    expect((await chunk(id, 5, "f")).status).toBe(409)
+    expect(await body(req(`/api/upload/${id}`, { as: "ann" }))).toEqual({ received: 3 })
+    expect((await body(chunk(id, 3, "def"))).name).toBe("resume.mov")
+    const folder = (await Array.fromAsync(new Bun.Glob("uploads/*/resume.mov").scan(join(dir, "data/library/ann"))))[0]
+    expect(await Bun.file(join(dir, "data/library/ann", folder)).text()).toBe("abcdef")
+    // A finished upload is gone.
+    expect((await req(`/api/upload/${id}`, { as: "ann" })).status).toBe(404)
+  })
+  test("nothing lands before the last byte, and no more than the size is taken", async () => {
+    const id = await start("half.jpg", 4)
+    await chunk(id, 0, "ab")
+    expect(await found("half.jpg")).toBe(0)
+    expect((await chunk(id, 2, "cde")).status).toBe(413)
+    expect(await body(req(`/api/upload/${id}`, { as: "ann" }))).toEqual({ received: 2 })
+  })
+  test("another user cannot see, feed or cancel an upload", async () => {
+    const id = await start("mine.jpg", 2)
+    expect((await req(`/api/upload/${id}`, { as: "bob" })).status).toBe(404)
+    expect((await chunk(id, 0, "zz", "bob")).status).toBe(404)
+    expect((await req(`/api/upload/${id}`, { method: "DELETE", as: "bob" })).status).toBe(404)
+    expect(await body(req(`/api/upload/${id}`, { as: "ann" }))).toEqual({ received: 0 })
+    expect((await req(`/api/upload/${id}`, { method: "DELETE", as: "ann" })).status).toBe(200)
+    expect((await req(`/api/upload/${id}`, { as: "ann" })).status).toBe(404)
+  })
+  test("one user may not hold more than 8 uploads open", async () => {
+    signIn("kim")
+    mkdirSync(join(dir, "data/library/kim"), { recursive: true })
+    for (let i = 0; i < 8; i++) await start(`k${i}.jpg`, 1, "kim")
+    expect((await post("/api/upload", { name: "k9.jpg", size: 1 }, "kim")).status).toBe(429)
+  })
+})
+
 describe("review fixes, upload and search", () => {
-  const put = (name: string, bytes: string, as: string) => req(`/api/upload?name=${encodeURIComponent(name)}`, { method: "PUT", body: bytes, as })
+  const put = (name: string, bytes: string, as: string) => upload(name, bytes, as)
   test("a user folder that is a link is refused before anything is written", async () => {
     const lib = join(dir, "data/library")
     signIn("hal")
@@ -308,7 +365,7 @@ describe("review fixes, upload and search", () => {
 
 test("an upload that would eat the reserve is refused", async () => {
   const tight = createApp(loadConfig({ ROLL_DATA: join(dir, "data"), ROLL_DIST: join(dir, "dist"), ROLL_ORIGIN: ROLL, ROLL_RESERVE_GB: "1000000" }))
-  const res = await tight.fetch(new Request(`${ROLL}/api/upload?name=big.jpg`, { method: "PUT", body: "x", headers: { host: "roll.test", origin: ROLL, cookie: cookies.ann } }))
+  const res = await tight.fetch(new Request(`${ROLL}/api/upload`, { method: "POST", body: JSON.stringify({ name: "big.jpg", size: 1 }), headers: { host: "roll.test", origin: ROLL, cookie: cookies.ann } }))
   expect(res.status).toBe(507)
 })
 
