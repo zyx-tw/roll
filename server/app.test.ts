@@ -313,8 +313,10 @@ describe("resumable upload", () => {
     expect((await body(chunk(id, 3, "def"))).name).toBe("resume.mov")
     const folder = (await Array.fromAsync(new Bun.Glob("uploads/*/resume.mov").scan(join(dir, "data/library/ann"))))[0]
     expect(await Bun.file(join(dir, "data/library/ann", folder)).text()).toBe("abcdef")
-    // A finished upload is gone.
-    expect((await req(`/api/upload/${id}`, { as: "ann" })).status).toBe(404)
+    // The last response lost: asking again gives the same name, no second copy.
+    expect(await body(req(`/api/upload/${id}`, { as: "ann" }))).toEqual({ received: 6, name: "resume.mov" })
+    expect(await body(chunk(id, 3, "def"))).toEqual({ received: 6, name: "resume.mov" })
+    expect(await found("resume*.mov")).toBe(1)
   })
   test("nothing lands before the last byte, and no more than the size is taken", async () => {
     const id = await start("half.jpg", 4)
@@ -335,8 +337,10 @@ describe("resumable upload", () => {
   test("one user may not hold more than 8 uploads open", async () => {
     signIn("kim")
     mkdirSync(join(dir, "data/library/kim"), { recursive: true })
-    for (let i = 0; i < 8; i++) await start(`k${i}.jpg`, 1, "kim")
-    expect((await post("/api/upload", { name: "k9.jpg", size: 1 }, "kim")).status).toBe(429)
+    // Started all at once, they still count each other.
+    const all = await Promise.all(Array.from({ length: 12 }, (_, i) => post("/api/upload", { name: `k${i}.jpg`, size: 1 }, "kim")))
+    expect(all.filter(res => res.ok)).toHaveLength(8)
+    expect(all.filter(res => res.status === 429)).toHaveLength(4)
   })
 })
 
@@ -361,6 +365,17 @@ describe("review fixes, upload and search", () => {
     expect(parseDateQuery("2/30", now)).toBeNull()
     expect(parseDateQuery("１２/２５", now)).toEqual({ from: Date.parse("2025-12-25T00:00:00+08:00"), to: Date.parse("2025-12-26T00:00:00+08:00") })
   })
+})
+
+test("uploads started together cannot promise the same free space twice", async () => {
+  const free = (await import("node:fs/promises")).statfs
+  const space = await free(join(dir, "data/tmp"))
+  const avail = space.bavail * space.bsize
+  // Reserve all but 3 GB: two 2 GB uploads started together cannot both fit.
+  const tight = createApp(loadConfig({ ROLL_DATA: join(dir, "data"), ROLL_DIST: join(dir, "dist"), ROLL_ORIGIN: ROLL, ROLL_RESERVE_GB: String((avail - 3 * 1024 ** 3) / 1024 ** 3) }))
+  const start = () => tight.fetch(new Request(`${ROLL}/api/upload`, { method: "POST", body: JSON.stringify({ name: "big.mov", size: 2 * 1024 ** 3 }), headers: { host: "roll.test", origin: ROLL, cookie: cookies.ann } }))
+  const both = await Promise.all([start(), start()])
+  expect(both.map(res => res.status).sort()).toEqual([200, 507])
 })
 
 test("an upload that would eat the reserve is refused", async () => {

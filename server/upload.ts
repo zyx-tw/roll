@@ -5,9 +5,11 @@
 // picks up where it stopped instead of sending the whole video again:
 //   POST   /api/upload          {name, size, modified}  -> {id, received}
 //   PUT    /api/upload/<id>?offset=<n>  one chunk       -> {received} or {received, name}
-//   GET    /api/upload/<id>                             -> {received}
+//   GET    /api/upload/<id>                             -> {received} or {received, name}
 //   DELETE /api/upload/<id>                             -> {ok}
-// Uploads in progress live in memory; a restart drops them and the client starts over.
+// Uploads live in memory; a restart drops them and the client starts over.
+// A finished upload stays known for a day, so a client that lost the last
+// response asks again and gets the same name instead of sending the file twice.
 import { appendFile, lstat, realpath, statfs, truncate, unlink, utimes, writeFile } from "node:fs/promises"
 import { dirname, extname, join } from "node:path"
 import type { Config } from "./config"
@@ -35,10 +37,12 @@ export function cleanName(input: unknown) {
   return name
 }
 
-type Pending = { id: string; userId: string; name: string; size: number; modified: number; part: string; received: number; busy: boolean; touched: number }
+type Pending = { id: string; userId: string; name: string; size: number; modified: number; part: string; received: number; busy: boolean; touched: number; landed?: string }
 
 export function createUpload(config: Config, library: ReturnType<typeof createLibrary>) {
   const pending = new Map<string, Pending>()
+
+  const owed = () => [...pending.values()].reduce((sum, entry) => sum + (entry.landed ? 0 : entry.size - entry.received), 0)
 
   async function drop(entry: Pending) {
     pending.delete(entry.id)
@@ -60,21 +64,27 @@ export function createUpload(config: Config, library: ReturnType<typeof createLi
     await sweep(now)
     // A link in place of the user folder is refused before anything is written.
     await userRoot(config.library, user.id)
-    const mine = [...pending.values()].filter(entry => entry.userId === user.id)
-    if (mine.length >= MAX_OPEN) throw new HttpError(429, "too many uploads")
-    // Room for this file and every other upload still on its way.
-    const owed = [...pending.values()].reduce((sum, entry) => sum + entry.size - entry.received, 0)
-    const space = await statfs(config.tmp)
-    if (space.bavail * space.bsize < size + owed + config.reserveBytes) {
-      log("upload.no_space", { user: user.id }, "WARN")
-      throw new HttpError(507)
-    }
+    // Count and register with no await in between, so uploads started together all see each other.
+    const open = [...pending.values()].filter(entry => entry.userId === user.id && !entry.landed)
+    if (open.length >= MAX_OPEN) throw new HttpError(429, "too many uploads")
     const modified = Number(input.modified)
     const id = newId()
     // Written in tmp first, so a scan never sees half a file.
     const part = join(config.tmp, `${id}.part`)
-    await writeFile(part, new Uint8Array(0), { flag: "wx" })
-    pending.set(id, { id, userId: user.id, name, size, modified: Number.isFinite(modified) && modified > 0 && modified <= now ? modified : 0, part, received: 0, busy: false, touched: now })
+    const entry: Pending = { id, userId: user.id, name, size, modified: Number.isFinite(modified) && modified > 0 && modified <= now ? modified : 0, part, received: 0, busy: false, touched: now }
+    pending.set(id, entry)
+    try {
+      // Room for this file and every other upload still on its way, this one included.
+      const space = await statfs(config.tmp)
+      if (space.bavail * space.bsize < owed() + config.reserveBytes) {
+        log("upload.no_space", { user: user.id }, "WARN")
+        throw new HttpError(507)
+      }
+      await writeFile(part, new Uint8Array(0), { flag: "wx" })
+    } catch (error) {
+      pending.delete(id)
+      throw error
+    }
     return json({ id, received: 0 })
   }
 
@@ -115,6 +125,7 @@ export function createUpload(config: Config, library: ReturnType<typeof createLi
   }
 
   async function chunk(req: Request, url: URL, user: User, entry: Pending) {
+    if (entry.landed) return json({ received: entry.received, name: entry.landed })
     if (entry.busy) throw new HttpError(409, "busy")
     const offset = Number(url.searchParams.get("offset"))
     // The client and server disagree on where the file stands: tell it.
@@ -122,6 +133,12 @@ export function createUpload(config: Config, library: ReturnType<typeof createLi
     entry.busy = true
     try {
       const bytes = await readChunk(req, entry.size - entry.received)
+      // Something outside roll (rsync, previews) may have used the room meanwhile.
+      const space = await statfs(config.tmp)
+      if (space.bavail * space.bsize < bytes.byteLength + config.reserveBytes) {
+        log("upload.no_space", { user: user.id }, "WARN")
+        throw new HttpError(507)
+      }
       try {
         await appendFile(entry.part, bytes)
       } catch (error) {
@@ -133,11 +150,14 @@ export function createUpload(config: Config, library: ReturnType<typeof createLi
       entry.touched = Date.now()
       if (entry.received < entry.size) return json({ received: entry.received })
       try {
-        const name = await finish(entry, user)
-        return json({ received: entry.received, name })
-      } finally {
+        entry.landed = await finish(entry, user)
+      } catch (error) {
         await drop(entry)
+        throw error
       }
+      // The bytes now live in the library under their own name; only the record stays.
+      await unlink(entry.part).catch(() => {})
+      return json({ received: entry.received, name: entry.landed })
     } finally {
       entry.busy = false
     }
@@ -152,10 +172,10 @@ export function createUpload(config: Config, library: ReturnType<typeof createLi
     const entry = pending.get(id)
     // Someone else's upload looks the same as none at all.
     if (!entry || entry.userId !== user.id) throw new HttpError(404)
-    if (req.method === "GET") return json({ received: entry.received })
+    if (req.method === "GET") return json(entry.landed ? { received: entry.received, name: entry.landed } : { received: entry.received })
     if (req.method === "PUT") return chunk(req, url, user, entry)
     if (req.method === "DELETE") {
-      if (!entry.busy) await drop(entry)
+      if (!entry.busy && !entry.landed) await drop(entry)
       return json({ ok: true })
     }
     throw new HttpError(405)

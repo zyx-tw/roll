@@ -109,6 +109,7 @@ export async function uploadFile(file: File, onProgress: (fraction: number, wait
       }
       onProgress(received / file.size, true)
       await backOnline(Math.min(1000 * 2 ** tries, 30_000))
+      // A finished upload reports received = size, which ends the loop.
       const state = await api<{ received: number }>(`/api/upload/${id}`).catch(() => null)
       if (state) received = state.received
     }
