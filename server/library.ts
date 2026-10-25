@@ -263,5 +263,8 @@ export function createLibrary(config: Config, db: Db, places: Places) {
     for (let i = queue.length - 1; i >= 0; i--) if (queue[i].id === id) queue.splice(i, 1)
   }
 
-  return { scan, drained, file, cacheDir, pending, forget }
+  // A delete that failed: its photo may render again.
+  const remember = (id: string) => void forgotten.delete(id)
+
+  return { scan, drained, file, cacheDir, pending, forget, remember }
 }

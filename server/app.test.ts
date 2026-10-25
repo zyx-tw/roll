@@ -387,3 +387,15 @@ describe("review fixes, delete", () => {
     expect(searchClause("京都 拉麵", places)).toBeNull()
   })
 })
+
+test("deletes of one photo run one at a time: the second finds nothing", async () => {
+  const lib = join(dir, "data/library")
+  await photo(join(lib, "ann/twice.jpg"), "2025:09:01 10:00:00")
+  await app.library.scan()
+  await app.library.drained()
+  const row = app.db.query("select id from photos where path = 'twice.jpg'").get() as { id: string }
+  const statuses = (await Promise.all([1, 2, 3].map(() => req(`/api/photos/${row.id}`, { method: "DELETE", as: "ann" })))).map(r => r.status)
+  expect(statuses.sort()).toEqual([200, 404, 404])
+  const trashed = await Array.fromAsync(new Bun.Glob(`.trash/*/${row.id}-*`).scan({ cwd: join(lib, "ann"), dot: true }))
+  expect(trashed).toHaveLength(1)
+})

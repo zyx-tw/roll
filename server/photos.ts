@@ -126,13 +126,38 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
   // Delete moves the original (and its Live Photo video) into
   // <user>/.trash/<day>/, which scans skip, in one rename each: the file is
   // never without a name. Only a plain file is moved, never through a link.
-  async function remove(user: User, id: string) {
+  // Deletes run one at a time. Only remove() writes into the trash, so with
+  // this queue the trash name it checks is still free when it renames.
+  let deleting: Promise<unknown> = Promise.resolve()
+  function remove(user: User, id: string) {
+    const run = deleting.then(() => removeNow(user, id))
+    deleting = run.catch(() => {})
+    return run
+  }
+
+  async function removeNow(user: User, id: string) {
+    // Looked up inside the queue: a second delete of the same photo finds nothing.
     const photo = find(user, id)
     const root = await userRoot(config.library, user.id)
     const day = new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10)
     const trash = await ensureDir(root, `.trash/${day}`)
     // Stop any preview job for it from writing the row back.
     library.forget(photo.id)
+    try {
+      await moveToTrash(root, trash, photo)
+    } catch (error) {
+      library.remember(photo.id)
+      throw error
+    }
+    db.query("delete from photos where id = ? and user_id = ?").run(photo.id, user.id)
+    await rm(library.cacheDir(photo.id), { recursive: true, force: true })
+    log("photo.deleted", { user: user.id, id: photo.id.slice(0, 4), live: photo.live_path !== null })
+    return json({ ok: true })
+  }
+
+  async function moveToTrash(root: string, trash: string, photo: Photo) {
+    // Check every file first, so a Live Photo is never left half moved.
+    const sources: string[] = []
     for (const rel of [photo.path, photo.live_path]) {
       if (!rel) continue
       const parent = await resolveExisting(root, dirname(rel) === "." ? "" : dirname(rel)).catch(() => null)
@@ -141,15 +166,14 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
       const info = await lstat(source).catch(() => null)
       if (!info) continue
       if (!info.isFile()) throw new HttpError(409, "not a plain file")
+      sources.push(source)
+    }
+    for (const source of sources) {
       // The photo id makes the trash name unique; a suffix covers a repeat.
-      let dest = join(trash, `${photo.id}-${basename(rel)}`)
-      for (let i = 1; await lstat(dest).then(() => true, () => false); i++) dest = join(trash, `${photo.id}-${i}-${basename(rel)}`)
+      let dest = join(trash, `${photo.id}-${basename(source)}`)
+      for (let i = 1; await lstat(dest).then(() => true, () => false); i++) dest = join(trash, `${photo.id}-${i}-${basename(source)}`)
       await rename(source, dest)
     }
-    db.query("delete from photos where id = ? and user_id = ?").run(photo.id, user.id)
-    await rm(library.cacheDir(photo.id), { recursive: true, force: true })
-    log("photo.deleted", { user: user.id, id: photo.id.slice(0, 4), live: photo.live_path !== null })
-    return json({ ok: true })
   }
 
   async function handle(req: Request, url: URL, user: User): Promise<Response> {
