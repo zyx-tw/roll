@@ -48,10 +48,10 @@ export function searchClause(q: string, places: Places) {
       args.push(country)
       return true
     }
-    const towns = places.towns(word)
-    if (towns.length) {
-      where.push(`place_id in (${towns.map(() => "?").join(",")})`)
-      args.push(...towns)
+    const areas = places.areas(word)
+    if (areas.length) {
+      where.push(`(${areas.map(() => "(lat between ? and ? and lon between ? and ?)").join(" or ")})`)
+      for (const a of areas) args.push(a.minLat, a.maxLat, a.minLon, a.maxLon)
       return true
     }
     return false

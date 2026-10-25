@@ -329,6 +329,8 @@ describe("places", () => {
   })
   test("one box: dates, towns and countries together, every word must match", () => {
     expect(searchClause("京都 4/15", places)?.where).toHaveLength(3)
+    // A town is an area: 4 bounds per town.
+    expect(searchClause("京都", places)?.args).toHaveLength(4)
     expect(searchClause("日本", places)?.args).toEqual(["JP"])
     expect(searchClause("2026 年 4 月", places)?.where).toHaveLength(2)
     expect(searchClause("京都 拉麵", places)).toBeNull()
@@ -398,4 +400,14 @@ test("deletes of one photo run one at a time: the second finds nothing", async (
   expect(statuses.sort()).toEqual([200, 404, 404])
   const trashed = await Array.fromAsync(new Bun.Glob(`.trash/*/${row.id}-*`).scan({ cwd: join(lib, "ann"), dot: true }))
   expect(trashed).toHaveLength(1)
+})
+
+test("a ward reads as its city, and the city's name reaches the ward", () => {
+  const places = loadPlaces(join(import.meta.dir, "fixtures/cities.txt"))
+  // Kamigyō-ku sits 2 km north of Kyoto's centre and is not in the fixture's names.
+  expect(places.nearest(35.03, 135.76)?.label).toBe("京都")
+  const [area] = places.areas("京都")
+  expect(35.03).toBeGreaterThan(area.minLat)
+  expect(35.03).toBeLessThan(area.maxLat)
+  expect(places.areas("京都")[0].maxLat - 35.02107).toBeGreaterThan(0.15)
 })
