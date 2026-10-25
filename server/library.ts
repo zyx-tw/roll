@@ -215,9 +215,13 @@ export function createLibrary(config: Config, db: Db, places: Places) {
   }
 
   // Photos scanned before places existed, or before the town file arrived.
+  // The first scan after a start places every photo again, so a change in
+  // how towns are chosen reaches old photos too.
+  let placedAll = false
   function placeMissing() {
     if (!places.ready) return
-    const rows = db.query("select id, lat, lon from photos where lat is not null and place_id is null").all() as Pick<Photo, "id" | "lat" | "lon">[]
+    const rows = db.query(`select id, lat, lon from photos where lat is not null${placedAll ? " and place_id is null" : ""}`).all() as Pick<Photo, "id" | "lat" | "lon">[]
+    placedAll = true
     const set = db.query("update photos set place_id = ?, country = ? where id = ?")
     db.transaction(() => {
       for (const row of rows) {

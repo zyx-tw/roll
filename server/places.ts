@@ -3,10 +3,17 @@
 // ("京都", "Kyoto", "日本") back into towns or a country. Off when the file is missing.
 import { existsSync, readFileSync } from "node:fs"
 
-type Town = { id: number; label: string; country: string; lat: number; lon: number }
+type Town = { id: number; label: string; han: boolean; country: string; lat: number; lon: number; population: number }
 
 // Beyond this a photo has no town (sea, sky, wilderness).
 const MAX_KM = 40
+
+// How far a town's name reaches: a village 3 km, Kyoto about 20 km, a
+// metropolis at most 25 km. Wards and districts fall inside their city.
+export const reachKm = (population: number) => Math.min(25, Math.max(3, 2 + Math.sqrt(population) / 60))
+
+const km = (aLat: number, aLon: number, bLat: number, bLon: number) =>
+  Math.hypot((bLon - aLon) * Math.cos(((aLat + bLat) / 2) * (Math.PI / 180)), bLat - aLat) * 111.2
 const SUFFIX = /(市|区|區|町|村|県|縣|郡|鎮|镇|鄉|乡)$/
 
 export const normalize = (text: string) => text.normalize("NFKC").trim().toLowerCase()
@@ -43,7 +50,7 @@ export function loadPlaces(path: string) {
       const alts = f[3] ? f[3].split(",") : []
       // The shortest name written in Han characters reads best here (京都, 大阪).
       const han = alts.filter(name => /^\p{Script=Han}+$/u.test(name)).sort((a, b) => a.length - b.length)[0]
-      const town: Town = { id, label: han ?? f[1], country: f[8], lat: Number(f[4]), lon: Number(f[5]) }
+      const town: Town = { id, label: han ?? f[1], han: han !== undefined, country: f[8], lat: Number(f[4]), lon: Number(f[5]), population: Number(f[14]) || 0 }
       towns.set(id, town)
       const cell = `${Math.floor(town.lat)},${Math.floor(town.lon)}`
       if (!grid.has(cell)) grid.set(cell, [])
@@ -62,29 +69,44 @@ export function loadPlaces(path: string) {
     }
   }
 
-  // The nearest town within MAX_KM, searching the 3 x 3 one-degree cells around.
+  // A photo's town, as people here would name it: the nearest town of 50,000
+  // or more whose reach covers the spot (Namba reads 大阪, Uji 宇治), else the
+  // nearest town with a Han name (a ward like Kamigyō-ku has none), else the
+  // nearest town of any name.
   function nearest(lat: number, lon: number): Town | null {
-    let best: Town | null = null
-    let bestKm = MAX_KM
+    const best = { city: [null, MAX_KM], named: [null, MAX_KM], any: [null, MAX_KM] } as Record<string, [Town | null, number]>
     for (let dy = -1; dy <= 1; dy++)
       for (let dx = -1; dx <= 1; dx++) {
         for (const town of grid.get(`${Math.floor(lat) + dy},${Math.floor(lon) + dx}`) ?? []) {
-          const x = (town.lon - lon) * Math.cos(((lat + town.lat) / 2) * (Math.PI / 180))
-          const km = Math.hypot(x, town.lat - lat) * 111.2
-          if (km < bestKm) {
-            best = town
-            bestKm = km
-          }
+          const d = km(lat, lon, town.lat, town.lon)
+          if (d < best.any[1]) best.any = [town, d]
+          if (town.han && d < best.named[1]) best.named = [town, d]
+          if (town.han && town.population >= 50_000 && d <= reachKm(town.population) && d < best.city[1]) best.city = [town, d]
         }
       }
-    return best
+    return best.city[0] ?? best.named[0] ?? best.any[0]
+  }
+
+  // Towns a word names, biggest first, at most 20.
+  function named(name: string) {
+    return [...(byName.get(normalize(name)) ?? [])]
+      .map(id => towns.get(id)!)
+      .sort((a, b) => b.population - a.population)
+      .slice(0, 20)
   }
 
   return {
     ready: towns.size > 0,
     nearest,
     label: (id: number | null) => (id === null ? null : (towns.get(id)?.label ?? null)),
-    towns: (name: string) => [...(byName.get(normalize(name)) ?? [])],
+    towns: (name: string) => named(name).map(town => town.id),
+    // Boxes around each named town, as far as its name reaches.
+    areas: (name: string) =>
+      named(name).map(town => {
+        const dLat = reachKm(town.population) / 111.2
+        const dLon = dLat / Math.max(0.01, Math.cos(town.lat * (Math.PI / 180)))
+        return { minLat: town.lat - dLat, maxLat: town.lat + dLat, minLon: town.lon - dLon, maxLon: town.lon + dLon }
+      }),
     country: (name: string) => countries.get(normalize(name)) ?? null,
   }
 }
