@@ -28,9 +28,24 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const post = <T>(path: string, body: unknown) => api<T>(path, { method: "POST", body: JSON.stringify(body) })
 
-const takenFormat = new Intl.DateTimeFormat("zh-TW", { year: "numeric", month: "long", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Taipei" })
+export function uploadFile(file: File, onProgress: (fraction: number) => void) {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open("PUT", `/api/upload?name=${encodeURIComponent(file.name)}&modified=${file.lastModified}`)
+    xhr.upload.onprogress = event => event.lengthComputable && onProgress(event.loaded / event.total)
+    xhr.onload = () => (xhr.status < 300 ? resolve() : reject(new ApiError(xhr.status, xhr.responseText)))
+    xhr.onerror = () => reject(new ApiError(0, "network"))
+    xhr.send(file)
+  })
+}
 
-export const formatTaken = (ms: number) => takenFormat.format(ms)
+const takenParts = new Intl.DateTimeFormat("zh-TW", { year: "numeric", month: "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Taipei" })
+
+// "2026 年 4 月 16 日 週四 09:28": numbers and words spaced apart.
+export function formatTaken(ms: number) {
+  const part = Object.fromEntries(takenParts.formatToParts(ms).map(p => [p.type, p.value]))
+  return `${part.year} 年 ${part.month} 月 ${part.day} 日 ${part.weekday} ${part.hour}:${part.minute}`
+}
 
 export function formatDuration(seconds: number) {
   const total = Math.round(seconds)

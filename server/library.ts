@@ -9,8 +9,8 @@ import type { Db, Photo } from "./db"
 import { resolveExisting } from "./paths"
 import { log } from "./otel"
 
-const IMAGE = new Set([".jpg", ".jpeg", ".heic", ".heif", ".png", ".webp", ".gif", ".tif", ".tiff", ".dng", ".avif"])
-const VIDEO = new Set([".mov", ".mp4", ".m4v"])
+export const IMAGE = new Set([".jpg", ".jpeg", ".heic", ".heif", ".png", ".webp", ".gif", ".tif", ".tiff", ".dng", ".avif"])
+export const VIDEO = new Set([".mov", ".mp4", ".m4v"])
 // Taiwan time when a file says nothing about its zone.
 const DEFAULT_OFFSET = "+08:00"
 export const SIZES = { large: "2048x2048>", thumb: "640x2000>" } as const
@@ -200,14 +200,25 @@ export function createLibrary(config: Config, db: Db) {
     pump()
   }
 
-  // One scan at a time; a call during a scan waits for it.
-  function scan() {
-    scanning ??= (async () => {
-      const users = db.query("select id from users").all() as { id: string }[]
-      // One user's failure must not stop the others.
-      for (const user of users) await scanUser(user.id).catch(error => log("library.scan_failed", { user: user.id, error: String(error).split(":")[0] }, "ERROR"))
+  // One scan at a time. A call during a scan runs one more scan after it, so
+  // a file that lands mid-scan (an upload) is picked up without waiting.
+  let again = false
+  function scan(): Promise<void> {
+    if (scanning) {
+      again = true
+      return scanning
+    }
+    scanning = (async () => {
+      do {
+        again = false
+        const users = db.query("select id from users").all() as { id: string }[]
+        // One user's failure must not stop the others.
+        for (const user of users) await scanUser(user.id).catch(error => log("library.scan_failed", { user: user.id, error: String(error).split(":")[0] }, "ERROR"))
+      } while (again)
     })().finally(() => {
       scanning = null
+      // A call that came in after the last check still gets its scan.
+      if (again) void scan()
     })
     return scanning
   }

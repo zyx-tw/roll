@@ -2,14 +2,15 @@
 
 ## Layout
 
-- `server/`: the Bun server. `app.ts` routes, `auth.ts` does passkeys, sessions and invites, `library.ts` scans originals and makes previews, `photos.ts` the timeline and media API, `paths.ts` path safety.
+- `server/`: the Bun server. `app.ts` routes, `auth.ts` does passkeys, sessions and invites, `library.ts` scans originals and makes previews, `photos.ts` the timeline and media API, `search.ts` date queries, `upload.ts` uploads, `paths.ts` path safety.
 - `src/`: the React app (`roll.tsx`). The shell and `components/ui` come from the task-web starter and ui.zyx.tw; do not edit `components/ui`.
 - `deploy/`: the systemd unit and the env file shape.
 
 ## Rules
 
 - Every photo query takes the photo id and the signed-in user id together. Never look a photo up by id alone.
-- Originals are read only. roll never writes, moves or deletes under `ROLL_LIBRARY`.
+- roll only adds files under `ROLL_LIBRARY`, through `upload.ts` into `<user>/uploads/<month>/`. It never changes, moves or deletes an original.
+- An upload writes to `tmp` first and lands with `link()`, so a scan never sees half a file and an existing name is never overwritten.
 - A path from the database reaches the disk only through `resolveExisting` under that user's folder.
 - Invites are made from the command line, never over HTTP. One invite makes one passkey.
 - The session cookie has no `Domain`. Never widen it.

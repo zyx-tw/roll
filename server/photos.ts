@@ -6,6 +6,7 @@ import type { Db, Photo, User } from "./db"
 import { HttpError, fileResponse, json } from "./http"
 import type { createLibrary } from "./library"
 import { resolveExisting } from "./paths"
+import { parseDateQuery } from "./search"
 
 const PAGE = 120
 const MAX_PAGE = 500
@@ -29,13 +30,20 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
     const limit = Math.min(MAX_PAGE, Math.max(1, Number(url.searchParams.get("limit")) || PAGE))
     // The cursor is the last item's time and id: "<ms>_<id>".
     const cursor = /^(\d+)_([A-Za-z0-9_-]{12})$/.exec(url.searchParams.get("cursor") ?? "")
-    const rows = (
-      cursor
-        ? db
-            .query("select * from photos where user_id = ? and status = 'ready' and (taken_at < ? or (taken_at = ? and id < ?)) order by taken_at desc, id desc limit ?")
-            .all(user.id, Number(cursor[1]), Number(cursor[1]), cursor[2], limit + 1)
-        : db.query("select * from photos where user_id = ? and status = 'ready' order by taken_at desc, id desc limit ?").all(user.id, limit + 1)
-    ) as Photo[]
+    const q = url.searchParams.get("q")?.slice(0, 100) ?? ""
+    const range = q ? parseDateQuery(q) : null
+    if (q && !range) return json({ items: [], next: null })
+    const where = ["user_id = ?", "status = 'ready'"]
+    const args: (string | number)[] = [user.id]
+    if (range) {
+      where.push("taken_at >= ?", "taken_at < ?")
+      args.push(range.from, range.to)
+    }
+    if (cursor) {
+      where.push("(taken_at < ? or (taken_at = ? and id < ?))")
+      args.push(Number(cursor[1]), Number(cursor[1]), cursor[2])
+    }
+    const rows = db.query(`select * from photos where ${where.join(" and ")} order by taken_at desc, id desc limit ?`).all(...args, limit + 1) as Photo[]
     const more = rows.length > limit
     const items = rows.slice(0, limit)
     const last = items.at(-1)

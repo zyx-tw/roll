@@ -4,8 +4,12 @@ import type { ReactNode } from "react"
 import { BottomCorners, LegalLinks, TopCorners } from "@/components/corners"
 import { cn } from "@/lib/utils"
 
-export function TaskShell({ title, description, actions, children, wide = false, lang = "en" }: {
+export function TaskShell({ title, description, actions, children, wide = false, lang = "en", showTitle = true, bottomCorners = true }: {
   title: string
+  /** false keeps the title for screen readers only. */
+  showTitle?: boolean
+  /** false leaves the bottom corners out. */
+  bottomCorners?: boolean
   description?: string
   actions?: ReactNode
   children: ReactNode
@@ -19,17 +23,17 @@ export function TaskShell({ title, description, actions, children, wide = false,
         {chinese ? "跳至主要內容" : "Skip to content"}
       </a>
       <TopCorners fade nav={actions && <nav aria-label={chinese ? "任務操作" : "Task actions"} className="flex max-w-[calc(100vw-6.25rem)] items-center gap-4">{actions}</nav>} />
-      <main id="task" tabIndex={-1} className={cn("mx-auto min-h-svh w-full px-5 pt-30 pb-25 outline-none", wide ? "max-w-6xl" : "max-w-xl lg:max-w-3xl 2xl:max-w-5xl")}>
-        <div className="mb-10">
+      <main id="task" tabIndex={-1} className={cn("mx-auto min-h-svh w-full px-5 outline-none", showTitle ? "pt-30" : "pt-20", bottomCorners ? "pb-25" : "pb-5", wide ? "max-w-6xl" : "max-w-xl lg:max-w-3xl 2xl:max-w-5xl")}>
+        <div className={showTitle ? "mb-10" : "sr-only"}>
           <h1 className="text-title font-medium">{title}</h1>
           {description && <p className="mt-3 text-body text-muted-foreground">{description}</p>}
         </div>
         {children}
       </main>
-      <BottomCorners fade links={<LegalLinks
+      {bottomCorners && <BottomCorners fade links={<LegalLinks
         labels={chinese ? { privacy: "隱私", terms: "條款" } : undefined}
         tips={chinese ? { privacy: "zyx.tw 各站的資料與紀錄方式", terms: "zyx.tw 各站的使用條款" } : undefined}
-      />} />
+      />} />}
     </>
   )
 }
