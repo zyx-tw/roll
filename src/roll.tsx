@@ -3,7 +3,6 @@ import { startAuthentication, startRegistration } from "@simplewebauthn/browser"
 import { ChevronLeft, ChevronRight, Download, LogOut, Play, Search, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { TaskShell } from "@/components/task-shell"
-import { TaskThemeToggle } from "@/components/task-theme"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -116,7 +115,6 @@ export function RollApp() {
       <Button type="button" variant="ghost" size="icon" onClick={() => picker.current?.click()} aria-label="上傳" title="上傳">
         <Upload aria-hidden />
       </Button>
-      <TaskThemeToggle lang="zh-TW" className="" />
       <Button type="button" variant="ghost" size="icon" onClick={logout} aria-label="登出" title="登出">
         <LogOut aria-hidden />
       </Button>
@@ -132,9 +130,7 @@ export function RollApp() {
         }}
       />
     </div>
-  ) : (
-    <TaskThemeToggle lang="zh-TW" />
-  )
+  ) : null
 
   return (
     <TaskShell title="roll" lang="zh-TW" actions={actions} wide showTitle={false} bottomCorners={false}>

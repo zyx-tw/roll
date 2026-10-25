@@ -217,6 +217,8 @@ export function createLibrary(config: Config, db: Db) {
       } while (again)
     })().finally(() => {
       scanning = null
+      // A call that came in after the last check still gets its scan.
+      if (again) void scan()
     })
     return scanning
   }

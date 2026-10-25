@@ -6,11 +6,8 @@
     <meta name="description" content="" />
     <title>roll</title>
     <script>
-      try {
-        if (localStorage.getItem("task-web-theme") === "light") {
-          document.documentElement.classList.replace("dark", "light");
-        }
-      } catch {}
+      // The system decides light or dark, before the first paint.
+      if (!matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.classList.replace("dark", "light");
       document.documentElement.style.colorScheme = document.documentElement.classList.contains("light") ? "light" : "dark";
     </script>
   </head>

@@ -12,7 +12,9 @@ function span(y: number, m?: number, d?: number): Range | null {
   if (m === undefined) return { from: at(y, 1, 1), to: at(y + 1, 1, 1) }
   if (d === undefined) return { from: at(y, m, 1), to: m === 12 ? at(y + 1, 1, 1) : at(y, m + 1, 1) }
   const from = at(y, m, d)
-  return Number.isFinite(from) ? { from, to: from + 86_400_000 } : null
+  // Date.parse rolls 2/30 over into March; refuse a day the month lacks.
+  if (!Number.isFinite(from) || new Date(from + 8 * 3_600_000).getUTCDate() !== d) return null
+  return { from, to: from + 86_400_000 }
 }
 
 // A year left out means the latest such month or day that is not in the future.
@@ -26,7 +28,8 @@ function latest(m: number, d: number | undefined, now: number) {
 }
 
 export function parseDateQuery(input: string, now = Date.now()): Range | null {
-  const q = input.trim().replace(/\s+/g, "").replace(/[年月]/g, "/").replace(/[日號号]$/, "")
+  // NFKC turns full-width digits from a Chinese input method into ASCII.
+  const q = input.normalize("NFKC").trim().replace(/\s+/g, "").replace(/[年月]/g, "/").replace(/[日號号]$/, "")
   let match: RegExpExecArray | null
   if ((match = /^(\d{4})$/.exec(q))) return span(Number(match[1]))
   if ((match = /^(\d{4})[-/.](\d{1,2})\/?$/.exec(q))) return span(Number(match[1]), Number(match[2]))

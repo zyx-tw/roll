@@ -44,7 +44,7 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "roll-test-"))
   mkdirSync(join(dir, "dist/assets"), { recursive: true })
   writeFileSync(join(dir, "dist/index.html"), "<!doctype html><title>roll</title>")
-  const config = loadConfig({ ROLL_DATA: join(dir, "data"), ROLL_DIST: join(dir, "dist"), ROLL_ORIGIN: ROLL })
+  const config = loadConfig({ ROLL_DATA: join(dir, "data"), ROLL_DIST: join(dir, "dist"), ROLL_ORIGIN: ROLL, ROLL_RESERVE_GB: "0" })
   app = createApp(config)
   signIn("ann")
   signIn("bob")
@@ -279,4 +279,33 @@ describe("upload", () => {
     expect((await put("x.jpg", "x", "gil")).status).toBe(404)
     expect(await Array.fromAsync(new Bun.Glob("*.jpg").scan(join(lib, "bob")))).not.toContain("x.jpg")
   })
+})
+
+describe("review fixes, upload and search", () => {
+  const put = (name: string, bytes: string, as: string) => req(`/api/upload?name=${encodeURIComponent(name)}`, { method: "PUT", body: bytes, as })
+  test("a user folder that is a link is refused before anything is written", async () => {
+    const lib = join(dir, "data/library")
+    signIn("hal")
+    symlinkSync(join(lib, "bob"), join(lib, "hal"))
+    expect((await put("h.jpg", "x", "hal")).status).toBe(404)
+    expect(await Array.fromAsync(new Bun.Glob("uploads/**").scan(join(lib, "bob")))).toHaveLength(0)
+    signIn("ivy")
+    expect((await put("i.jpg", "x", "ivy")).status).toBe(404)
+  })
+  test("names are capped by bytes and may not hold control characters", async () => {
+    expect((await put(`${"照".repeat(70)}.jpg`, "x", "ann")).status).toBe(400)
+    expect((await put("a\r\nb.jpg", "x", "ann")).status).toBe(400)
+  })
+  test("a day the month lacks is not a date, full-width digits are", () => {
+    const now = Date.parse("2026-10-26T12:00:00+08:00")
+    expect(parseDateQuery("2026-02-30", now)).toBeNull()
+    expect(parseDateQuery("2/30", now)).toBeNull()
+    expect(parseDateQuery("１２/２５", now)).toEqual({ from: Date.parse("2025-12-25T00:00:00+08:00"), to: Date.parse("2025-12-26T00:00:00+08:00") })
+  })
+})
+
+test("an upload that would eat the reserve is refused", async () => {
+  const tight = createApp(loadConfig({ ROLL_DATA: join(dir, "data"), ROLL_DIST: join(dir, "dist"), ROLL_ORIGIN: ROLL, ROLL_RESERVE_GB: "1000000" }))
+  const res = await tight.fetch(new Request(`${ROLL}/api/upload?name=big.jpg`, { method: "PUT", body: "x", headers: { host: "roll.test", origin: ROLL, cookie: cookies.ann } }))
+  expect(res.status).toBe(507)
 })

@@ -49,6 +49,7 @@ Open the printed link and register a passkey. Copy photos into `data/library/lok
 | `ROLL_PORT` | the listen port | `8080` |
 | `ROLL_SCAN_MINUTES` | minutes between library scans | `15` |
 | `ROLL_WORKERS` | previews made at once | `2` |
+| `ROLL_RESERVE_GB` | disk space an upload must leave free | `10` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | where OTLP/HTTP JSON logs go | off |
 
 ## How it works
@@ -72,7 +73,7 @@ Facts for coding agents and LLM tools. The rules for changing the code are in [A
 - **Install**: `bun install`, plus `exiftool`, `vips` with HEIF and `ffmpeg` on the host
 - **Run**: `bun run start`
 - **Verify**: `bun test server`
-- **Config**: `ROLL_ORIGIN`, `ROLL_DATA`, `ROLL_LIBRARY`, `ROLL_DIST`, `ROLL_PORT`, `ROLL_SCAN_MINUTES`, `ROLL_WORKERS`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`
+- **Config**: `ROLL_ORIGIN`, `ROLL_DATA`, `ROLL_LIBRARY`, `ROLL_DIST`, `ROLL_PORT`, `ROLL_SCAN_MINUTES`, `ROLL_WORKERS`, `ROLL_RESERVE_GB`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`
 - **Secrets**: the OTLP header lives in `/etc/roll/env` on the server.
 - **Limits**: Search covers dates only so far.
 

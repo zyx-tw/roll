@@ -51,6 +51,7 @@ bun run start
 | `ROLL_PORT` | 監聽埠 | `8080` |
 | `ROLL_SCAN_MINUTES` | 兩次掃描間隔的分鐘數 | `15` |
 | `ROLL_WORKERS` | 同時製作的預覽數 | `2` |
+| `ROLL_RESERVE_GB` | 上傳後至少要留下的磁碟空間 | `10` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP JSON 記錄送往的位置 | 關閉 |
 
 ## 運作方式
