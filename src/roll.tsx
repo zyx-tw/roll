@@ -193,13 +193,13 @@ export function RollApp() {
   return (
     <TaskShell title="roll" lang="zh-TW" actions={actions} wide showTitle={false} bottomCorners={false}>
       {me && !me.user && (
-        <section aria-label="登入" className="flex gap-3">
+        <section aria-label="登入" className={forApp ? "fixed inset-0 flex items-center justify-center" : "flex gap-3"}>
           {invite ? <Button onClick={register}>註冊</Button> : <Button onClick={login}>登入</Button>}
         </section>
       )}
       {me?.user && forApp && (
-        <section aria-label="回到 app" className="flex gap-3">
-          <Button onClick={toApp}>回到 roll app</Button>
+        <section aria-label="回到 roll" className="fixed inset-0 flex items-center justify-center">
+          <Button onClick={toApp}>回到 roll</Button>
         </section>
       )}
       {me?.user && !forApp && (
