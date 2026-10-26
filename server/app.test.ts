@@ -472,7 +472,7 @@ describe("places", () => {
     expect(searchClause("京都", places)?.args).toHaveLength(4)
     expect(searchClause("日本", places)?.args).toEqual(["JP"])
     expect(searchClause("2026 年 4 月", places)?.where).toHaveLength(2)
-    expect(searchClause("京都 拉麵", places)).toBeNull()
+    expect(searchClause("京都 拉麵", places).free).toEqual(["拉麵"])
   })
 })
 
@@ -493,7 +493,7 @@ describe("delete", () => {
     expect((await body(req("/api/photos", { as: "ann" }))).items.find((p: { live: boolean }) => p.live)).toBeUndefined()
   })
   test("pending counts this user's files still waiting for previews", async () => {
-    expect(await body(req("/api/photos/pending", { as: "ann" }))).toEqual({ files: 0, scanning: false })
+    expect(await body(req("/api/photos/pending", { as: "ann" }))).toEqual({ files: 0, scanning: false, indexing: 0 })
   })
 })
 
@@ -525,7 +525,7 @@ describe("review fixes, delete", () => {
   test("the longest run of words is read first", () => {
     const places = loadPlaces(join(import.meta.dir, "fixtures/cities.txt"))
     expect(searchClause("京都 2026 年 4 月", places)?.where).toHaveLength(3)
-    expect(searchClause("京都 拉麵", places)).toBeNull()
+    expect(searchClause("京都 拉麵", places).free).toEqual(["拉麵"])
   })
 })
 

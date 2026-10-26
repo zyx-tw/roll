@@ -49,11 +49,16 @@ const scan = () =>
     .scan()
     .then(() => app.library.drained())
     .then(() => app.playback.pump())
+    .then(() => app.smart.pump())
     .catch(error => log("library.scan_failed", { error: String(error) }, "ERROR"))
 void scan()
 setInterval(scan, config.scanMinutes * 60_000)
-// Uploads scan on their own; this picks up their videos within a minute.
-setInterval(() => void app.playback.pump(), 60_000)
+// Uploads scan on their own; this picks up their videos, and reads them for
+// search, within a minute.
+setInterval(() => {
+  void app.playback.pump()
+  void app.smart.pump()
+}, 60_000)
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, async () => {

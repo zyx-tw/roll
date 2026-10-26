@@ -11,6 +11,7 @@ import { log } from "./otel"
 import { ensureDir, resolveExisting, userRoot } from "./paths"
 import type { Places } from "./places"
 import { parseDateQuery } from "./search"
+import { kindClause, type Smart } from "./smart"
 
 const PAGE = 120
 const MAX_PAGE = 500
@@ -30,70 +31,103 @@ export function view(photo: Photo, places?: Places) {
   }
 }
 
-// One search box: each word is a date, a town or a country, and every word
-// must match. A word that is none of these matches nothing for now; meaning
-// (semantic search) comes next.
+// One search box. Each word is a date, a town, a country or a kind of photo
+// (自拍, 截圖, 影片), and narrows the timeline; every other word is free text,
+// matched by meaning and by text in the photo (smart.ts). A word with no
+// spaces may start or end with a known word: "京都拉麵" is 京都 and 拉麵.
 export function searchClause(q: string, places: Places) {
   const where: string[] = []
   const args: (string | number)[] = []
+  const free: string[] = []
   const add = (word: string) => {
     const range = parseDateQuery(word)
     if (range) {
-      where.push("taken_at >= ?", "taken_at < ?")
+      where.push("p.taken_at >= ?", "p.taken_at < ?")
       args.push(range.from, range.to)
+      return true
+    }
+    const kind = kindClause(word)
+    if (kind) {
+      where.push(`(${kind})`)
       return true
     }
     const country = places.country(word)
     if (country) {
-      where.push("country = ?")
+      where.push("p.country = ?")
       args.push(country)
       return true
     }
     const areas = places.areas(word)
     if (areas.length) {
-      where.push(`(${areas.map(() => "(lat between ? and ? and lon between ? and ?)").join(" or ")})`)
+      where.push(`(${areas.map(() => "(p.lat between ? and ? and p.lon between ? and ?)").join(" or ")})`)
       for (const a of areas) args.push(a.minLat, a.maxLat, a.minLon, a.maxLon)
       return true
     }
     return false
   }
+  // A known word at the start or the end of one unspaced word, longest first.
+  const peel = (word: string) => {
+    const chars = [...word]
+    for (let n = chars.length - 1; n >= 2; n--) {
+      if (add(chars.slice(0, n).join(""))) return void free.push(chars.slice(n).join(""))
+      if (add(chars.slice(chars.length - n).join(""))) return void free.push(chars.slice(0, chars.length - n).join(""))
+    }
+    free.push(word)
+  }
   // Take the longest run of words that means something ("2026 年 4 月" is
-  // one date), then go on after it. Every run must mean something.
+  // one date), then go on after it.
   const words = q.split(/\s+/).filter(Boolean)
   for (let i = 0; i < words.length; ) {
     let j = words.length
     while (j > i && !add(words.slice(i, j).join(" "))) j--
-    if (j === i) return null
-    i = j
+    if (j === i) {
+      peel(words[i])
+      i++
+    } else i = j
   }
-  return { where, args }
+  return { where, args, free }
 }
 
-export function createPhotos(config: Config, db: Db, library: ReturnType<typeof createLibrary>, places: Places, playback: ReturnType<typeof createPlayback>) {
-  function timeline(user: User, url: URL) {
+export function createPhotos(config: Config, db: Db, library: ReturnType<typeof createLibrary>, places: Places, playback: ReturnType<typeof createPlayback>, smart: Smart) {
+  async function timeline(user: User, url: URL) {
     const limit = Math.min(MAX_PAGE, Math.max(1, Number(url.searchParams.get("limit")) || PAGE))
-    // The cursor is the last item's time and id: "<ms>_<id>".
-    const cursor = /^(\d+)_([A-Za-z0-9_-]{12})$/.exec(url.searchParams.get("cursor") ?? "")
     const q = url.searchParams.get("q")?.slice(0, 100) ?? ""
-    const where = ["user_id = ?", "status = 'ready'"]
+    const where = ["p.user_id = ?", "p.status = 'ready'"]
     const args: (string | number)[] = [user.id]
-    if (q) {
-      const clause = searchClause(q, places)
-      if (!clause) return json({ items: [], next: null })
+    const clause = q ? searchClause(q, places) : null
+    if (clause) {
       where.push(...clause.where)
       args.push(...clause.args)
     }
+    const from = "from photos p left join photo_index i on i.photo_id = p.id"
+    if (clause?.free.length) return ranked(user, url, limit, `${from} where ${where.join(" and ")}`, args, clause.free)
+    // The cursor is the last item's time and id: "<ms>_<id>".
+    const cursor = /^(\d+)_([A-Za-z0-9_-]{12})$/.exec(url.searchParams.get("cursor") ?? "")
     if (cursor) {
-      where.push("(taken_at < ? or (taken_at = ? and id < ?))")
+      where.push("(p.taken_at < ? or (p.taken_at = ? and p.id < ?))")
       args.push(Number(cursor[1]), Number(cursor[1]), cursor[2])
     }
-    const rows = db.query(`select * from photos where ${where.join(" and ")} order by taken_at desc, id desc limit ?`).all(...args, limit + 1) as Photo[]
+    const rows = db.query(`select p.* ${from} where ${where.join(" and ")} order by p.taken_at desc, p.id desc limit ?`).all(...args, limit + 1) as Photo[]
     const more = rows.length > limit
     const items = rows.slice(0, limit)
     const last = items.at(-1)
     // The first page also says how many items match, for "4,429 個項目".
-    const total = cursor ? undefined : (db.query(`select count(*) as n from photos where ${where.join(" and ")}`).get(...args) as { n: number }).n
+    const total = cursor ? undefined : (db.query(`select count(*) as n ${from} where ${where.join(" and ")}`).get(...args) as { n: number }).n
     return json({ items: items.map(photo => view(photo, places)), next: more && last ? `${last.taken_at}_${last.id}` : null, total })
+  }
+
+  // Free words rank by relevance instead of time. The cursor is an offset into
+  // the ranking: "r<n>". Without the embed service, nothing matches free words.
+  async function ranked(user: User, url: URL, limit: number, fromWhere: string, args: (string | number)[], free: string[]) {
+    if (!smart.enabled) return json({ items: [], next: null, total: 0 })
+    const offset = Number(/^r(\d+)$/.exec(url.searchParams.get("cursor") ?? "")?.[1] ?? 0)
+    const candidates = db.query(`select p.id, p.version, i.text_key, i.indexed_at as indexed ${fromWhere}`).all(...args) as Parameters<Smart["rank"]>[0]
+    const ids = await smart.rank(candidates, free)
+    const page = ids.slice(offset, offset + limit)
+    const get = db.query("select * from photos where id = ? and user_id = ?")
+    const items = page.map(id => get.get(id, user.id) as Photo | null).filter((p): p is Photo => p !== null)
+    log("search.ranked", { candidates: candidates.length, matches: ids.length, words: free.length })
+    return json({ items: items.map(photo => view(photo, places)), next: offset + limit < ids.length ? `r${offset + limit}` : null, total: offset ? undefined : ids.length })
   }
 
   function find(user: User, id: string) {
@@ -186,7 +220,7 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
   }
 
   async function handle(req: Request, url: URL, user: User): Promise<Response> {
-    if (url.pathname === "/api/photos/pending" && req.method === "GET") return json(library.pending(user.id))
+    if (url.pathname === "/api/photos/pending" && req.method === "GET") return json({ ...library.pending(user.id), indexing: smart.pending(user.id) })
     const target = /^\/api\/photos\/([^/]+)$/.exec(url.pathname)
     if (req.method === "DELETE" && target) return remove(user, target[1])
     if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405)
