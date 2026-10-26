@@ -20,6 +20,13 @@ const INVITE_DAYS = 7
 const FLOW_MS = 5 * 60_000
 const MAX_FLOWS = 1000
 
+// The iOS app signs in through the web page: the page hands it a one-time code,
+// and only the app that started the flow (holding the PKCE verifier) can trade it.
+const APP_CODE_MS = 60_000
+const MAX_APP_CODES = 1000
+const PKCE = /^[A-Za-z0-9_-]{43,128}$/
+type AppCode = { userId: string; challenge: string; expires: number }
+
 type Flow = { challenge: string; kind: "register" | "login"; userId: string | null; expires: number }
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex")
@@ -67,14 +74,20 @@ export function createAuth(config: Config, db: Db) {
     return row
   }
 
-  function newSession(userId: string, headers: Headers) {
+  function sessionToken(userId: string) {
     const token = randomBytes(32).toString("base64url")
     const now = Date.now()
     db.query("delete from sessions where expires_at < ?").run(now)
     db.query("insert into sessions (token_hash, user_id, created_at, expires_at) values (?, ?, ?, ?)").run(sha256(token), userId, now, now + SESSION_DAYS * 86_400_000)
-    headers.append("set-cookie", cookie(SESSION_COOKIE, token, SESSION_DAYS * 86_400))
+    return token
+  }
+
+  function newSession(userId: string, headers: Headers) {
+    headers.append("set-cookie", cookie(SESSION_COOKIE, sessionToken(userId), SESSION_DAYS * 86_400))
     headers.append("set-cookie", cookie(FLOW_COOKIE, "", 0))
   }
+
+  const appCodes = new Map<string, AppCode>()
 
   function startFlow(kind: Flow["kind"], challenge: string, userId: string | null, headers: Headers) {
     const now = Date.now()
@@ -126,6 +139,38 @@ export function createAuth(config: Config, db: Db) {
       throw new HttpError(429)
     }
     limiter.miss(ip)
+
+    // The signed-in page asks for a code to hand to the iOS app.
+    if (path === "/api/auth/app/code") {
+      const user = session(req)
+      if (!user) throw new HttpError(401)
+      const { challenge } = await readJson(req)
+      if (typeof challenge !== "string" || !PKCE.test(challenge)) throw new HttpError(400, "bad challenge")
+      const now = Date.now()
+      for (const [hash, entry] of appCodes) {
+        if (entry.expires >= now && appCodes.size < MAX_APP_CODES) break
+        appCodes.delete(hash)
+      }
+      const code = randomBytes(32).toString("base64url")
+      appCodes.set(sha256(code), { userId: user.id, challenge, expires: now + APP_CODE_MS })
+      return json({ code })
+    }
+
+    // The app trades the code and its verifier for a session token, once.
+    if (path === "/api/auth/app/token") {
+      const { code, verifier } = await readJson(req)
+      if (typeof code !== "string" || typeof verifier !== "string" || !PKCE.test(verifier) || code.length > 128) throw new HttpError(400)
+      const hash = sha256(code)
+      const entry = appCodes.get(hash)
+      appCodes.delete(hash)
+      const expected = createHash("sha256").update(verifier).digest("base64url")
+      if (!entry || entry.expires < Date.now() || expected.length !== entry.challenge.length || !timingSafeEqual(Buffer.from(expected), Buffer.from(entry.challenge))) {
+        log("auth.app_failed", {}, "WARN")
+        throw new HttpError(401)
+      }
+      log("auth.login", { user: entry.userId, via: "app" })
+      return json({ token: sessionToken(entry.userId) })
+    }
 
     if (path === "/api/auth/logout") {
       const token = cookies(req).get(SESSION_COOKIE)

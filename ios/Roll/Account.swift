@@ -1,3 +1,4 @@
+import AuthenticationServices
 import Foundation
 import Observation
 
@@ -18,8 +19,10 @@ final class Account {
     func signIn() async {
         error = nil
         do {
-            try await Passkey.signIn()
+            try await WebLogin.signIn()
             await refresh()
+        } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
+            return
         } catch let error as APIError {
             self.error = "登入失敗（伺服器 \(error.status)）"
         } catch {

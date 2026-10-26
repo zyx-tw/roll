@@ -384,6 +384,27 @@ test("an upload that would eat the reserve is refused", async () => {
   expect(res.status).toBe(507)
 })
 
+describe("iOS app sign-in", () => {
+  const verifier = "v".repeat(43)
+  const challenge = createHash("sha256").update(verifier).digest("base64url")
+  const code = async () => (await body(post("/api/auth/app/code", { challenge }, "ann"))).code as string
+  test("only a signed-in page gets a code, for a well-formed challenge", async () => {
+    expect((await post("/api/auth/app/code", { challenge })).status).toBe(401)
+    expect((await post("/api/auth/app/code", { challenge: "short" }, "ann")).status).toBe(400)
+  })
+  test("the code needs the right verifier and works once", async () => {
+    const wrong = await code()
+    expect((await post("/api/auth/app/token", { code: wrong, verifier: "w".repeat(43) })).status).toBe(401)
+    // A failed try spends the code.
+    expect((await post("/api/auth/app/token", { code: wrong, verifier })).status).toBe(401)
+    const right = await code()
+    const { token } = await body(post("/api/auth/app/token", { code: right, verifier }))
+    expect((await post("/api/auth/app/token", { code: right, verifier })).status).toBe(401)
+    const me = await body(app.fetch(new Request(`${ROLL}/api/auth/me`, { headers: { host: "roll.test", cookie: `roll_session=${token}` } })))
+    expect(me.user.id).toBe("ann")
+  })
+})
+
 test("the iOS app may use the site's passkeys", async () => {
   const res = await req("/.well-known/apple-app-site-association")
   expect(res.headers.get("content-type")).toContain("application/json")

@@ -20,6 +20,9 @@ export function RollApp() {
   const picker = useRef<HTMLInputElement>(null)
   const pickedAt = useRef(0)
   const invite = new URLSearchParams(window.location.search).get("invite")
+  // Opened by the iOS app to sign in: the PKCE challenge it will prove later.
+  const appChallenge = new URLSearchParams(window.location.search).get("app")
+  const forApp = !!appChallenge && /^[A-Za-z0-9_-]{43,128}$/.test(appChallenge)
   const signedIn = !!me?.user
 
   useEffect(() => {
@@ -48,6 +51,15 @@ export function RollApp() {
       await refresh()
     } catch {
       toast.error("註冊失敗")
+    }
+  }
+
+  async function toApp() {
+    try {
+      const { code } = await post<{ code: string }>("/api/auth/app/code", { challenge: appChallenge })
+      window.location.href = `tw.zyx.roll://login?code=${encodeURIComponent(code)}`
+    } catch {
+      toast.error("登入失敗")
     }
   }
 
@@ -148,7 +160,7 @@ export function RollApp() {
   }, [signedIn])
 
   // Each button keeps its 40px hit area; only the row is pulled to the corner.
-  const actions = signedIn ? (
+  const actions = signedIn && !forApp ? (
     <div className="-my-3 -mr-3 flex items-center">
       <Button type="button" variant="ghost" size="icon" onClick={() => setSearching(true)} aria-label="搜尋" title="搜尋">
         <Search aria-hidden />
@@ -185,7 +197,12 @@ export function RollApp() {
           {invite ? <Button onClick={register}>註冊</Button> : <Button onClick={login}>登入</Button>}
         </section>
       )}
-      {me?.user && (
+      {me?.user && forApp && (
+        <section aria-label="回到 app" className="flex gap-3">
+          <Button onClick={toApp}>回到 roll app</Button>
+        </section>
+      )}
+      {me?.user && !forApp && (
         <>
           {query && (
             <div className="mb-6 flex items-center gap-2 text-body">
