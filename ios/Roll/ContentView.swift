@@ -55,15 +55,12 @@ struct LibraryView: View {
 
     private var header: some View {
         HStack(alignment: .top) {
-            // At the bottom: roll and the count. Scrolled up: the date in view, as in Photos.
+            // At the bottom: the item count. Scrolled up: the date in view, as in Photos.
             VStack(alignment: .leading, spacing: 0) {
                 if let photo = scrolledTo {
                     Text(formatDay(photo.takenAt)).font(.largeTitle.bold()).lineLimit(1).minimumScaleFactor(0.6)
-                } else {
-                    Text("roll").font(.largeTitle.bold())
-                    if let total = gallery.total {
-                        Text("\(total.formatted()) 個項目").font(.subheadline.weight(.semibold))
-                    }
+                } else if let total = gallery.total {
+                    Text("\(total.formatted()) 個項目").font(.largeTitle.bold())
                 }
             }
             .animation(.easeInOut(duration: 0.2), value: scrolledTo?.id)
