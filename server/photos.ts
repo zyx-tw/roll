@@ -6,6 +6,7 @@ import type { Config } from "./config"
 import type { Db, Photo, User } from "./db"
 import { HttpError, fileResponse, json } from "./http"
 import { cameraInfo, type createLibrary } from "./library"
+import type { createPlayback } from "./playback"
 import { log } from "./otel"
 import { ensureDir, resolveExisting, userRoot } from "./paths"
 import type { Places } from "./places"
@@ -68,7 +69,7 @@ export function searchClause(q: string, places: Places) {
   return { where, args }
 }
 
-export function createPhotos(config: Config, db: Db, library: ReturnType<typeof createLibrary>, places: Places) {
+export function createPhotos(config: Config, db: Db, library: ReturnType<typeof createLibrary>, places: Places, playback: ReturnType<typeof createPlayback>) {
   function timeline(user: User, url: URL) {
     const limit = Math.min(MAX_PAGE, Math.max(1, Number(url.searchParams.get("limit")) || PAGE))
     // The cursor is the last item's time and id: "<ms>_<id>".
@@ -115,6 +116,12 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
       response.headers.set("cache-control", "private, max-age=31536000, immutable")
       response.headers.set("vary", "Cookie")
       return response
+    }
+    // The playback copy when there is one, else the original.
+    if (part === "play") {
+      const copy = photo.kind === "video" ? await playback.path(photo.id) : null
+      if (copy) return fileResponse(req, copy, `${photo.id}.mp4`, Bun.file(copy).size, false).response
+      part = "original"
     }
     const rel = part === "original" ? photo.path : part === "live" ? photo.live_path : null
     if (!rel) throw new HttpError(404)
@@ -184,7 +191,7 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
     if (req.method === "DELETE" && target) return remove(user, target[1])
     if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405)
     if (url.pathname === "/api/photos") return timeline(user, url)
-    const match = /^\/api\/photos\/([^/]+)\/(thumb|large|original|live)$/.exec(url.pathname)
+    const match = /^\/api\/photos\/([^/]+)\/(thumb|large|original|live|play)$/.exec(url.pathname)
     if (match) return media(req, user, match[1], match[2])
     const one = /^\/api\/photos\/([^/]+)$/.exec(url.pathname)
     if (one) {
