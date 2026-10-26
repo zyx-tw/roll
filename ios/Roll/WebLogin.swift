@@ -20,6 +20,7 @@ final class WebLogin: NSObject, ASWebAuthenticationPresentationContextProviding 
             throw APIError(status: 0)
         }
         var body: [String: Any] = ["code": code, "verifier": verifier]
+        lastAttestError = nil
         do {
             body["attest"] = try await attest(code: code)
         } catch {
