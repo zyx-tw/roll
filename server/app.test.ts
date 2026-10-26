@@ -407,6 +407,9 @@ describe("iOS app sign-in", () => {
     expect((await as("/api/photos")).status).toBe(403)
     expect((await as("/api/photos/pending")).status).toBe(403)
     expect((await as("/api/auth/app/code", { method: "POST", body: JSON.stringify({ challenge }) })).status).toBe(401)
+    // Nor can it add a passkey and turn itself into a full session.
+    expect((await as("/api/auth/register/options", { method: "POST", body: "{}" })).status).toBe(403)
+    expect((await as("/api/auth/register/verify", { method: "POST", body: "{}" })).ok).toBe(false)
     expect((await as("/api/upload", { method: "POST", body: JSON.stringify({ name: "app.jpg", size: 1 }) })).status).toBe(200)
   })
 })

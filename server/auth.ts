@@ -123,7 +123,8 @@ export function createAuth(config: Config, db: Db) {
   // Who a new passkey belongs to: the signed-in user, or the user an invite names.
   function registrant(req: Request, token: unknown) {
     const user = session(req)
-    if (user) return { userId: user.id, invite: null }
+    // An upload-only session never adds a passkey: that would make it a full one.
+    if (user && !user.scope) return { userId: user.id, invite: null }
     const found = invite(token)
     return found ? { userId: found.user_id, invite: found.token_hash } : null
   }
