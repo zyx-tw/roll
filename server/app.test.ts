@@ -384,6 +384,36 @@ test("an upload that would eat the reserve is refused", async () => {
   expect(res.status).toBe(507)
 })
 
+describe("iOS app sign-in", () => {
+  const verifier = "v".repeat(43)
+  const challenge = createHash("sha256").update(verifier).digest("base64url")
+  const code = async () => (await body(post("/api/auth/app/code", { challenge }, "ann"))).code as string
+  test("only a signed-in page gets a code, for a well-formed challenge", async () => {
+    expect((await post("/api/auth/app/code", { challenge })).status).toBe(401)
+    expect((await post("/api/auth/app/code", { challenge: "short" }, "ann")).status).toBe(400)
+  })
+  test("the code needs the right verifier and works once", async () => {
+    const wrong = await code()
+    expect((await post("/api/auth/app/token", { code: wrong, verifier: "w".repeat(43) })).status).toBe(401)
+    // A failed try spends the code.
+    expect((await post("/api/auth/app/token", { code: wrong, verifier })).status).toBe(401)
+    const right = await code()
+    const { token } = await body(post("/api/auth/app/token", { code: right, verifier }))
+    expect((await post("/api/auth/app/token", { code: right, verifier })).status).toBe(401)
+    const as = (path: string, init: RequestInit = {}) =>
+      app.fetch(new Request(ROLL + path, { ...init, headers: { host: "roll.test", origin: ROLL, cookie: `roll_session=${token}` } }))
+    expect((await body(as("/api/auth/me"))).user.id).toBe("ann")
+    // An app session only sends files: no browsing, no deleting, no new codes.
+    expect((await as("/api/photos")).status).toBe(403)
+    expect((await as("/api/photos/pending")).status).toBe(403)
+    expect((await as("/api/auth/app/code", { method: "POST", body: JSON.stringify({ challenge }) })).status).toBe(401)
+    // Nor can it add a passkey and turn itself into a full session.
+    expect((await as("/api/auth/register/options", { method: "POST", body: "{}" })).status).toBe(403)
+    expect((await as("/api/auth/register/verify", { method: "POST", body: "{}" })).ok).toBe(false)
+    expect((await as("/api/upload", { method: "POST", body: JSON.stringify({ name: "app.jpg", size: 1 }) })).status).toBe(200)
+  })
+})
+
 test("the iOS app may use the site's passkeys", async () => {
   const res = await req("/.well-known/apple-app-site-association")
   expect(res.headers.get("content-type")).toContain("application/json")
