@@ -30,7 +30,7 @@ export async function run(cmd: string[]) {
 
 // Camera details for the info panel, read when asked: one file, numbers as numbers.
 export async function cameraInfo(path: string) {
-  const text = await run(["exiftool", "-json", "-n", "-q", "-q", "-fast", "-Make", "-Model", "-LensModel", "-ISO", "-FNumber", "-ExposureTime", "-FocalLength", "-FocalLengthIn35mmFormat", "-ExposureCompensation", "-VideoFrameRate", "-CompressorName", "-ColorTransferCharacteristics", "--", path]).catch(() => "[]")
+  const text = await run(["exiftool", "-json", "-n", "-q", "-q", "-fast", "-Make", "-Model", "-LensModel", "-ISO", "-FNumber", "-ExposureTime", "-FocalLength", "-FocalLengthIn35mmFormat", "-ExposureCompensation", "-VideoFrameRate", "-CompressorName", "-ImageSize", "--", path]).catch(() => "[]")
   const tags = ((JSON.parse(text) as Record<string, unknown>[])[0] ?? {}) as Record<string, unknown>
   const str = (key: string) => (typeof tags[key] === "string" ? (tags[key] as string).trim().slice(0, 100) || null : null)
   const num = (key: string) => (typeof tags[key] === "number" && Number.isFinite(tags[key]) ? (tags[key] as number) : null)
@@ -46,6 +46,8 @@ export async function cameraInfo(path: string) {
     ev: num("ExposureCompensation"),
     fps: num("VideoFrameRate"),
     codec: str("CompressorName"),
+    // The original's pixel size, sides in either order: "5712 4284".
+    pixels: typeof tags.ImageSize === "string" ? (tags.ImageSize as string).split(/[ x]/).map(Number).filter(n => Number.isInteger(n) && n > 0) : [],
   }
 }
 

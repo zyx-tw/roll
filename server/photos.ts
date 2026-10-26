@@ -191,7 +191,11 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
       const photo = find(user, one[1])
       // The original is read only through resolveExisting, inside this user's folder.
       const original = await resolveExisting(join(config.library, user.id), photo.path)
-      return json({ ...view(photo, places), name: photo.path.split("/").pop(), size: photo.size, lat: photo.lat, lon: photo.lon, camera: await cameraInfo(original) })
+      const { pixels, ...camera } = await cameraInfo(original)
+      // The stored size is the preview's; report the original's, turned the way the preview shows it.
+      const [long, short] = pixels.length === 2 ? [Math.max(...pixels), Math.min(...pixels)] : [Math.max(photo.width, photo.height), Math.min(photo.width, photo.height)]
+      const [width, height] = photo.height > photo.width ? [short, long] : [long, short]
+      return json({ ...view(photo, places), name: photo.path.split("/").pop(), size: photo.size, lat: photo.lat, lon: photo.lon, camera: { ...camera, width, height } })
     }
     throw new HttpError(404)
   }

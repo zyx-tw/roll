@@ -13,6 +13,8 @@ nonisolated struct Camera: Decodable, Sendable {
     let ev: Double?
     let fps: Double?
     let codec: String?
+    let width: Int?
+    let height: Int?
 }
 
 nonisolated struct Detail: Decodable, Sendable {
@@ -30,8 +32,11 @@ struct InfoSheet: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(formatTaken(photo.takenAt)).font(.headline)
+            VStack(alignment: .leading, spacing: 12) {
+                Text(formatTaken(photo.takenAt))
+                    .font(.headline)
+                    .padding(16)
+                    .block()
                 if let detail {
                     card(detail)
                     if let lat = detail.lat, let lon = detail.lon { map(lat, lon) }
@@ -62,6 +67,7 @@ struct InfoSheet: View {
                 Text(sizeLine(d)).font(.subheadline).foregroundStyle(.secondary)
             }
             .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
             let numbers = settings(c)
             if !numbers.isEmpty {
                 Divider()
@@ -74,20 +80,17 @@ struct InfoSheet: View {
                 .padding(.vertical, 12)
             }
         }
-        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 16))
+        .block()
     }
 
     private func map(_ lat: Double, _ lon: Double) -> some View {
         let spot = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-        return VStack(alignment: .leading, spacing: 8) {
-            Map(initialPosition: .region(MKCoordinateRegion(center: spot, latitudinalMeters: 800, longitudinalMeters: 800))) {
-                Marker("", coordinate: spot)
-            }
-            .frame(height: 220)
-            .clipShape(.rect(cornerRadius: 16))
-            .allowsHitTesting(false)
-            if let place = photo.place { Text(place).font(.subheadline) }
+        return Map(initialPosition: .region(MKCoordinateRegion(center: spot, latitudinalMeters: 800, longitudinalMeters: 800))) {
+            Marker("", coordinate: spot)
         }
+        .frame(height: 220)
+        .clipShape(.rect(cornerRadius: 16))
+        .allowsHitTesting(false)
     }
 
     // "後置相機 26 mm ƒ1.6", from "iPhone Air back camera 5.96mm f/1.6".
@@ -102,14 +105,17 @@ struct InfoSheet: View {
 
     // "12 MP • 4032 × 3024 • 2.1 MB", or for video "4K • 3840 × 2160 • 2 GB • 60 fps • HEVC".
     private func sizeLine(_ d: Detail) -> String {
-        let long = max(photo.width, photo.height)
+        // The original's size from the server; the stored one is the preview's.
+        let width = d.camera.width ?? photo.width
+        let height = d.camera.height ?? photo.height
+        let long = max(width, height)
         var parts: [String] = []
         if photo.isVideo {
-            parts.append(long >= 3840 ? "4K" : long >= 1920 ? "HD" : "\(min(photo.width, photo.height))p")
+            parts.append(long >= 3840 ? "4K" : long >= 1920 ? "HD" : "\(min(width, height))p")
         } else {
-            parts.append("\(Int((Double(photo.width * photo.height) / 1_000_000).rounded())) MP")
+            parts.append("\(Int((Double(width * height) / 1_000_000).rounded())) MP")
         }
-        parts.append("\(photo.width) × \(photo.height)")
+        parts.append("\(width) × \(height)")
         parts.append(ByteCountFormatter.string(fromByteCount: Int64(d.size), countStyle: .file))
         if let fps = d.camera.fps { parts.append("\(Int(fps.rounded())) fps") }
         if let codec = d.camera.codec { parts.append(codec) }
@@ -129,6 +135,14 @@ struct InfoSheet: View {
 
     private func trim(_ value: Double) -> String {
         value == value.rounded() ? "\(Int(value))" : String(format: "%.1f", value)
+    }
+}
+
+extension View {
+    // One info block: full width, the same fill and corners for every block.
+    func block() -> some View {
+        frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 16))
     }
 }
 
