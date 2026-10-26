@@ -34,7 +34,6 @@ struct LibraryView: View {
     @Environment(Uploader.self) private var uploader
     @State private var gallery = Gallery()
     @State private var picked: [PhotosPickerItem] = []
-    @State private var searching = false
     @State private var scrolledTo: Photo?
 
     var body: some View {
@@ -47,7 +46,6 @@ struct LibraryView: View {
             .onChange(of: uploader.finished) { Task { await gallery.waitForPreviews() } }
             .overlay(alignment: .top) { header }
             .overlay(alignment: .bottom) { footer }
-            .sheet(isPresented: $searching) { SearchSheet() }
             .onChange(of: picked) {
                 let ids = picked.compactMap(\.itemIdentifier)
                 picked = []
@@ -61,7 +59,6 @@ struct LibraryView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if let photo = scrolledTo {
                     Text(formatDay(photo.takenAt)).font(.largeTitle.bold()).lineLimit(1).minimumScaleFactor(0.6)
-                    if let place = photo.place { Text(place).font(.subheadline.weight(.semibold)) }
                 } else {
                     Text("roll").font(.largeTitle.bold())
                     if let total = gallery.total {
@@ -93,27 +90,22 @@ struct LibraryView: View {
         .shadow(color: .black.opacity(0.25), radius: 4)
     }
 
+    // Upload status on the left, the upload button on the right.
     private var footer: some View {
         HStack(alignment: .bottom) {
+            if let summary = uploader.summary {
+                Text(summary)
+                    .font(.footnote.monospacedDigit())
+                    .padding(.horizontal, 16)
+                    .frame(height: 44)
+                    .glassEffect(.regular, in: .capsule)
+            }
+            Spacer()
             PhotosPicker(selection: $picked, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current, photoLibrary: .shared()) {
                 Image(systemName: "plus").font(.title2.weight(.medium)).frame(width: 56, height: 56)
             }
             .glassEffect(.regular.interactive(), in: .circle)
             .accessibilityLabel("上傳")
-            Spacer()
-            if let summary = uploader.summary {
-                Text(summary)
-                    .font(.footnote.monospacedDigit())
-                    .padding(.horizontal, 14)
-                    .frame(height: 40)
-                    .glassEffect(.regular, in: .capsule)
-                Spacer()
-            }
-            Button { searching = true } label: {
-                Image(systemName: "magnifyingglass").font(.title2.weight(.medium)).frame(width: 56, height: 56)
-            }
-            .glassEffect(.regular.interactive(), in: .circle)
-            .accessibilityLabel("搜尋")
         }
         .foregroundStyle(.primary)
         .padding(.horizontal, 20)

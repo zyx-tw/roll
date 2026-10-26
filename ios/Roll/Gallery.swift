@@ -27,6 +27,11 @@ final class Gallery {
         next = page.next
     }
 
+    func remove(_ photo: Photo) {
+        photos.removeAll { $0.id == photo.id }
+        if let total { self.total = total - 1 }
+    }
+
     // After an upload the server still makes previews: reload when they are ready.
     func waitForPreviews() async {
         for _ in 0..<120 {
@@ -85,7 +90,7 @@ struct PhotoGrid: View {
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
         .fullScreenCover(item: $open) { photo in
-            Viewer(photos: shown, start: photo)
+            Viewer(gallery: gallery, start: photo)
                 .presentationBackground(.clear)
         }
     }
@@ -118,19 +123,22 @@ struct Thumb: View {
     }
 }
 
-// Full screen, swipe sideways for the next item, pull down to close. No buttons.
+// Full screen, swipe sideways for the next item, pull down to close, tap to
+// hide the bar. The bar: when it was taken on the left, delete on the right.
 struct Viewer: View {
-    let photos: [Photo]
+    let gallery: Gallery
     @State private var current: Photo?
     @State private var drag: CGSize = .zero
     @State private var chrome = true
+    @State private var confirming = false
     @Environment(\.dismiss) private var dismiss
 
-    init(photos: [Photo], start: Photo) {
-        self.photos = photos
+    init(gallery: Gallery, start: Photo) {
+        self.gallery = gallery
         _current = State(initialValue: start)
     }
 
+    private var photos: [Photo] { gallery.photos.reversed() }
     private var progress: Double { min(max(drag.height / 300, 0), 1) }
 
     var body: some View {
@@ -147,16 +155,8 @@ struct Viewer: View {
             .scaleEffect(1 - progress * 0.3)
             .offset(x: drag.width * 0.5, y: max(drag.height, 0))
         }
-        .overlay(alignment: .top) {
-            if chrome, let current, progress == 0 {
-                VStack(spacing: 2) {
-                    Text(formatTaken(current.takenAt)).font(.subheadline.weight(.semibold))
-                    if let place = current.place { Text(place).font(.caption) }
-                }
-                .foregroundStyle(.white)
-                .shadow(radius: 3)
-                .padding(.top, 8)
-            }
+        .overlay(alignment: .bottom) {
+            if chrome, let current, progress == 0 { bar(current) }
         }
         .onTapGesture { chrome.toggle() }
         .simultaneousGesture(
@@ -174,6 +174,46 @@ struct Viewer: View {
                 }
         )
         .statusBarHidden(!chrome)
+        .confirmationDialog("刪除這個項目？", isPresented: $confirming, titleVisibility: .visible) {
+            Button("刪除", role: .destructive) { Task { await delete() } }
+        }
+    }
+
+    private func bar(_ photo: Photo) -> some View {
+        HStack {
+            VStack(spacing: 0) {
+                Text(relativeDay(photo.takenAt)).font(.subheadline.weight(.semibold))
+                Text(clockTime(photo.takenAt)).font(.caption.weight(.medium)).monospacedDigit()
+            }
+            .padding(.horizontal, 22)
+            .frame(height: 52)
+            .glassEffect(.regular, in: .capsule)
+            Spacer()
+            Button { confirming = true } label: {
+                Image(systemName: "trash").font(.title3).frame(width: 52, height: 52)
+            }
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel("刪除")
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 4)
+    }
+
+    // Moves the item to the trash on the server, then shows the next one.
+    private func delete() async {
+        guard let photo = current else { return }
+        do {
+            _ = try await Client.shared.send("/api/photos/\(photo.id)", method: "DELETE")
+        } catch {
+            return
+        }
+        let list = photos
+        let index = list.firstIndex(of: photo) ?? 0
+        gallery.remove(photo)
+        let rest = photos
+        if rest.isEmpty { return dismiss() }
+        current = rest[min(index, rest.count - 1)]
     }
 
     struct Page: View {
@@ -207,37 +247,28 @@ struct Viewer: View {
     }
 }
 
-// Search like Photos: a field, results as you type, newest at the bottom.
-struct SearchSheet: View {
-    @State private var gallery = Gallery()
-    @State private var text = ""
-    @FocusState private var focused: Bool
+private let taipei = TimeZone(identifier: "Asia/Taipei")!
 
-    var body: some View {
-        PhotoGrid(gallery: gallery, topInset: 8, bottomInset: 80)
-            .overlay(alignment: .bottom) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("", text: $text)
-                        .focused($focused)
-                        .submitLabel(.search)
-                        .autocorrectionDisabled()
-                }
-                .padding(.horizontal, 16)
-                .frame(height: 48)
-                .glassEffect(.regular.interactive(), in: .capsule)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-            }
-            .task(id: text) {
-                try? await Task.sleep(for: .milliseconds(250))
-                gallery.query = text.trimmingCharacters(in: .whitespaces)
-                if gallery.query.isEmpty { gallery.photos = []; return }
-                await gallery.reload()
-            }
-            .onAppear { focused = true }
-            .presentationDragIndicator(.visible)
-    }
+// As Photos says it: 今天, 昨天, 星期三 within the week, else 2026 年 10 月 25 日.
+func relativeDay(_ ms: Double) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = taipei
+    let date = Date(timeIntervalSince1970: ms / 1000)
+    let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: Date())).day ?? 99
+    if days == 0 { return "今天" }
+    if days == 1 { return "昨天" }
+    if days > 1 && days < 7 { return "星期" + ["日", "一", "二", "三", "四", "五", "六"][calendar.component(.weekday, from: date) - 1] }
+    return formatDay(ms)
+}
+
+// "上午 11:09".
+func clockTime(_ ms: Double) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = taipei
+    let c = calendar.dateComponents([.hour, .minute], from: Date(timeIntervalSince1970: ms / 1000))
+    let hour = c.hour ?? 0
+    let twelve = hour % 12 == 0 ? 12 : hour % 12
+    return (hour < 12 ? "上午 " : "下午 ") + "\(twelve):" + String(format: "%02d", c.minute ?? 0)
 }
 
 // "2026 年 10 月 25 日", the day a photo was taken, in Taiwan time.
