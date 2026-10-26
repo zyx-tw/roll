@@ -136,7 +136,9 @@ describe("photos", () => {
   test("one item's details include the camera, read from the original", async () => {
     const first = (await body(req("/api/photos", { as: "ann" }))).items.find((p: { kind: string }) => p.kind === "image")
     const detail = await body(req(`/api/photos/${first.id}`, { as: "ann" }))
-    expect(Object.keys(detail.camera)).toEqual(["make", "model", "lens", "iso", "fNumber", "exposure", "focal", "focal35", "ev", "fps", "codec"])
+    expect(Object.keys(detail.camera)).toEqual(["make", "model", "lens", "iso", "fNumber", "exposure", "focal", "focal35", "ev", "fps", "codec", "width", "height"])
+    // The original's size, the same way round as the preview.
+    expect([detail.camera.width, detail.camera.height]).toEqual(first.width > first.height ? [300, 200] : [200, 300])
     // Bob cannot read Ann's details.
     expect((await req(`/api/photos/${first.id}`, { as: "bob" })).status).toBe(404)
   })
