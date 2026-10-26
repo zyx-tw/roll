@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path"
 import type { Config } from "./config"
 import type { Db, Photo, User } from "./db"
 import { HttpError, fileResponse, json } from "./http"
-import type { createLibrary } from "./library"
+import { cameraInfo, type createLibrary } from "./library"
 import { log } from "./otel"
 import { ensureDir, resolveExisting, userRoot } from "./paths"
 import type { Places } from "./places"
@@ -189,7 +189,9 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
     const one = /^\/api\/photos\/([^/]+)$/.exec(url.pathname)
     if (one) {
       const photo = find(user, one[1])
-      return json({ ...view(photo, places), name: photo.path.split("/").pop(), size: photo.size, lat: photo.lat, lon: photo.lon })
+      // The original is read only through resolveExisting, inside this user's folder.
+      const original = await resolveExisting(join(config.library, user.id), photo.path)
+      return json({ ...view(photo, places), name: photo.path.split("/").pop(), size: photo.size, lat: photo.lat, lon: photo.lon, camera: await cameraInfo(original) })
     }
     throw new HttpError(404)
   }

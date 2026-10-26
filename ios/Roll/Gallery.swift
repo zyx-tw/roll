@@ -131,6 +131,7 @@ struct Viewer: View {
     @State private var drag: CGSize = .zero
     @State private var chrome = true
     @State private var confirming = false
+    @State private var info: Photo?
     @Environment(\.dismiss) private var dismiss
 
     init(gallery: Gallery, start: Photo) {
@@ -174,6 +175,7 @@ struct Viewer: View {
                 }
         )
         .statusBarHidden(!chrome)
+        .sheet(item: $info) { InfoSheet(photo: $0) }
         .confirmationDialog("刪除這個項目？", isPresented: $confirming, titleVisibility: .visible) {
             Button("刪除", role: .destructive) { Task { await delete() } }
         }
@@ -181,13 +183,16 @@ struct Viewer: View {
 
     private func bar(_ photo: Photo) -> some View {
         HStack {
-            VStack(spacing: 0) {
-                Text(relativeDay(photo.takenAt)).font(.subheadline.weight(.semibold))
-                Text(clockTime(photo.takenAt)).font(.caption.weight(.medium)).monospacedDigit()
+            // Tap the date for the details.
+            Button { info = photo } label: {
+                VStack(spacing: 0) {
+                    Text(relativeDay(photo.takenAt)).font(.subheadline.weight(.semibold))
+                    Text(clockTime(photo.takenAt)).font(.caption.weight(.medium)).monospacedDigit()
+                }
+                .padding(.horizontal, 22)
+                .frame(height: 52)
             }
-            .padding(.horizontal, 22)
-            .frame(height: 52)
-            .glassEffect(.regular, in: .capsule)
+            .glassEffect(.regular.interactive(), in: .capsule)
             Spacer()
             Button { confirming = true } label: {
                 Image(systemName: "trash").font(.title3).frame(width: 52, height: 52)
