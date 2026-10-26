@@ -4,6 +4,8 @@ export type User = {
   id: string
   name: string
   created_at: number
+  // "upload" for a session that may only send files; null for a full session.
+  scope?: string | null
 }
 
 export type Credential = {
@@ -91,6 +93,9 @@ export function openDb(path: string) {
   if (!columns.has("place_id")) db.exec("alter table photos add column place_id integer")
   if (!columns.has("country")) db.exec("alter table photos add column country text")
   db.exec("create index if not exists photos_place on photos(user_id, place_id)")
+  // "upload" sessions (from the iOS app) may only send files; null is a full session.
+  const sessionColumns = new Set((db.query("pragma table_info(sessions)").all() as { name: string }[]).map(c => c.name))
+  if (!sessionColumns.has("scope")) db.exec("alter table sessions add column scope text")
   return db
 }
 

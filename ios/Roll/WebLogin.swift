@@ -34,7 +34,10 @@ final class WebLogin: NSObject, ASWebAuthenticationPresentationContextProviding 
             session.presentationContextProvider = self
             // Kept until the sheet answers; a released session cancels itself.
             self.session = session
-            session.start()
+            if !session.start() {
+                self.session = nil
+                continuation.resume(throwing: APIError(status: 0))
+            }
         }
     }
 

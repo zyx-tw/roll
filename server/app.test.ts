@@ -400,8 +400,14 @@ describe("iOS app sign-in", () => {
     const right = await code()
     const { token } = await body(post("/api/auth/app/token", { code: right, verifier }))
     expect((await post("/api/auth/app/token", { code: right, verifier })).status).toBe(401)
-    const me = await body(app.fetch(new Request(`${ROLL}/api/auth/me`, { headers: { host: "roll.test", cookie: `roll_session=${token}` } })))
-    expect(me.user.id).toBe("ann")
+    const as = (path: string, init: RequestInit = {}) =>
+      app.fetch(new Request(ROLL + path, { ...init, headers: { host: "roll.test", origin: ROLL, cookie: `roll_session=${token}` } }))
+    expect((await body(as("/api/auth/me"))).user.id).toBe("ann")
+    // An app session only sends files: no browsing, no deleting, no new codes.
+    expect((await as("/api/photos")).status).toBe(403)
+    expect((await as("/api/photos/pending")).status).toBe(403)
+    expect((await as("/api/auth/app/code", { method: "POST", body: JSON.stringify({ challenge }) })).status).toBe(401)
+    expect((await as("/api/upload", { method: "POST", body: JSON.stringify({ name: "app.jpg", size: 1 }) })).status).toBe(200)
   })
 })
 

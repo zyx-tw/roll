@@ -69,16 +69,16 @@ export function createAuth(config: Config, db: Db) {
     const token = cookies(req).get(SESSION_COOKIE)
     if (!token) return null
     const row = db
-      .query("select users.* from sessions join users on users.id = sessions.user_id where sessions.token_hash = ? and sessions.expires_at > ?")
+      .query("select users.*, sessions.scope from sessions join users on users.id = sessions.user_id where sessions.token_hash = ? and sessions.expires_at > ?")
       .get(sha256(token), Date.now()) as User | null
     return row
   }
 
-  function sessionToken(userId: string) {
+  function sessionToken(userId: string, scope: "upload" | null = null) {
     const token = randomBytes(32).toString("base64url")
     const now = Date.now()
     db.query("delete from sessions where expires_at < ?").run(now)
-    db.query("insert into sessions (token_hash, user_id, created_at, expires_at) values (?, ?, ?, ?)").run(sha256(token), userId, now, now + SESSION_DAYS * 86_400_000)
+    db.query("insert into sessions (token_hash, user_id, created_at, expires_at, scope) values (?, ?, ?, ?, ?)").run(sha256(token), userId, now, now + SESSION_DAYS * 86_400_000, scope)
     return token
   }
 
@@ -143,7 +143,7 @@ export function createAuth(config: Config, db: Db) {
     // The signed-in page asks for a code to hand to the iOS app.
     if (path === "/api/auth/app/code") {
       const user = session(req)
-      if (!user) throw new HttpError(401)
+      if (!user || user.scope) throw new HttpError(401)
       const { challenge } = await readJson(req)
       if (typeof challenge !== "string" || !PKCE.test(challenge)) throw new HttpError(400, "bad challenge")
       const now = Date.now()
@@ -169,7 +169,9 @@ export function createAuth(config: Config, db: Db) {
         throw new HttpError(401)
       }
       log("auth.login", { user: entry.userId, via: "app" })
-      return json({ token: sessionToken(entry.userId) })
+      // Any app can claim the tw.zyx.roll scheme, so a code may reach an app
+      // that is not roll: its session can add files but never see or remove one.
+      return json({ token: sessionToken(entry.userId, "upload") })
     }
 
     if (path === "/api/auth/logout") {

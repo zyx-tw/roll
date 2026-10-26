@@ -59,8 +59,10 @@ export function createApp(config: Config) {
       if (url.pathname.startsWith("/api/auth/")) return auth.handle(req, url.pathname, ip)
       const user = auth.session(req)
       if (!user) throw new HttpError(401)
+      const isUpload = url.pathname === "/api/upload" || url.pathname.startsWith("/api/upload/")
+      if (user.scope === "upload" && !isUpload) throw new HttpError(403)
       if (url.pathname.startsWith("/api/photos")) return photos.handle(req, url, user)
-      if (url.pathname === "/api/upload" || url.pathname.startsWith("/api/upload/")) return upload.handle(req, url, user)
+      if (isUpload) return upload.handle(req, url, user)
       throw new HttpError(404)
     }
     return serveStatic(url.pathname)
