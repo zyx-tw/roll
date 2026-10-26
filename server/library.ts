@@ -21,11 +21,32 @@ type Meta = { takenAt: number | null; lat: number | null; lon: number | null; du
 
 export const newId = () => randomBytes(9).toString("base64url")
 
-async function run(cmd: string[]) {
+export async function run(cmd: string[]) {
   const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" })
   const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
   if (code !== 0) throw new Error(`${cmd[0]} exited ${code}: ${err.trim().slice(0, 200)}`)
   return out
+}
+
+// Camera details for the info panel, read when asked: one file, numbers as numbers.
+export async function cameraInfo(path: string) {
+  const text = await run(["exiftool", "-json", "-n", "-q", "-q", "-fast", "-Make", "-Model", "-LensModel", "-ISO", "-FNumber", "-ExposureTime", "-FocalLength", "-FocalLengthIn35mmFormat", "-ExposureCompensation", "-VideoFrameRate", "-CompressorName", "-ColorTransferCharacteristics", "--", path]).catch(() => "[]")
+  const tags = ((JSON.parse(text) as Record<string, unknown>[])[0] ?? {}) as Record<string, unknown>
+  const str = (key: string) => (typeof tags[key] === "string" ? (tags[key] as string).trim().slice(0, 100) || null : null)
+  const num = (key: string) => (typeof tags[key] === "number" && Number.isFinite(tags[key]) ? (tags[key] as number) : null)
+  return {
+    make: str("Make"),
+    model: str("Model"),
+    lens: str("LensModel"),
+    iso: num("ISO"),
+    fNumber: num("FNumber"),
+    exposure: num("ExposureTime"),
+    focal: num("FocalLength"),
+    focal35: num("FocalLengthIn35mmFormat"),
+    ev: num("ExposureCompensation"),
+    fps: num("VideoFrameRate"),
+    codec: str("CompressorName"),
+  }
 }
 
 // "2025:10:01 12:34:56" plus an offset like "+08:00", as epoch ms.

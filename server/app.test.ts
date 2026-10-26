@@ -133,6 +133,13 @@ describe("photos", () => {
     expect(b.height).toBe(300)
     expect(b.takenAt).toBe(Date.parse("2025-06-01T10:00:00+09:00"))
   })
+  test("one item's details include the camera, read from the original", async () => {
+    const first = (await body(req("/api/photos", { as: "ann" }))).items.find((p: { kind: string }) => p.kind === "image")
+    const detail = await body(req(`/api/photos/${first.id}`, { as: "ann" }))
+    expect(Object.keys(detail.camera)).toEqual(["make", "model", "lens", "iso", "fNumber", "exposure", "focal", "focal35", "ev", "fps", "codec"])
+    // Bob cannot read Ann's details.
+    expect((await req(`/api/photos/${first.id}`, { as: "bob" })).status).toBe(404)
+  })
   test("pages by cursor", async () => {
     const first = await body(req("/api/photos?limit=3", { as: "ann" }))
     expect(first.items).toHaveLength(3)

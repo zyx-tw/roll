@@ -68,16 +68,6 @@ struct LibraryView: View {
             }
             .animation(.easeInOut(duration: 0.2), value: scrolledTo?.id)
             Spacer()
-            Menu {
-                if uploader.items.contains(where: { if case .failed = $0.status { true } else { false } }) {
-                    Button("重試失敗的項目", systemImage: "arrow.clockwise") { Task { await uploader.retry() } }
-                }
-                Button("登出", systemImage: "rectangle.portrait.and.arrow.right") { Task { await account.signOut() } }
-            } label: {
-                Image(systemName: "person.fill").font(.title3).frame(width: 48, height: 48)
-            }
-            .glassEffect(.regular.interactive(), in: .circle)
-            .accessibilityLabel("帳號")
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 20)
