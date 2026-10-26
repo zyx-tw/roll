@@ -12,6 +12,7 @@ export type Config = {
   workers: number
   reserveBytes: number
   geonames: string
+  iosApps: string[]
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -31,5 +32,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     // GeoNames cities1000.txt; without it, no place names.
     geonames: resolve(env.ROLL_GEONAMES ?? join(data, "geo/cities1000.txt")),
     reserveBytes: Number(env.ROLL_RESERVE_GB ?? 10) * 1024 ** 3,
+    // <team id>.<bundle id> of the iOS apps that may sign in with roll's passkeys.
+    iosApps: (env.ROLL_IOS_APPS ?? "68PK3GTMDD.tw.zyx.roll").split(",").filter(Boolean),
   }
 }

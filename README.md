@@ -92,3 +92,11 @@ bun test server && bun run typecheck && bun run lint
 ## License
 
 [MIT](LICENSE)
+
+## iOS app
+
+`ios/` holds a SwiftUI app that uploads originals straight from Photos. Safari transcodes videos before a web upload; the app reads the original files through PhotoKit instead.
+
+- Build and test in Xcode, or with `xcodebuild -project ios/Roll.xcodeproj -scheme Roll`.
+- `ios/upload.sh` archives and uploads a build to TestFlight with the App Store Connect API key.
+- Debug builds accept `-rollSession <token>` and `-rollUploadRecent <n>` to test in the simulator without a passkey or the picker.

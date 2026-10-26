@@ -384,6 +384,12 @@ test("an upload that would eat the reserve is refused", async () => {
   expect(res.status).toBe(507)
 })
 
+test("the iOS app may use the site's passkeys", async () => {
+  const res = await req("/.well-known/apple-app-site-association")
+  expect(res.headers.get("content-type")).toContain("application/json")
+  expect(await res.json()).toEqual({ webcredentials: { apps: ["68PK3GTMDD.tw.zyx.roll"] } })
+})
+
 describe("places", () => {
   const places = loadPlaces(join(import.meta.dir, "fixtures/cities.txt"))
   test("GPS turns into the nearest town, not one too far away", () => {

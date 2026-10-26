@@ -50,6 +50,9 @@ export function createApp(config: Config) {
     const url = new URL(req.url)
     if (req.headers.get("host") !== host) throw new HttpError(421)
 
+    // Lets the iOS app use the same passkeys as the site.
+    if (url.pathname === "/.well-known/apple-app-site-association") return json({ webcredentials: { apps: config.iosApps } })
+
     if (url.pathname.startsWith("/api/")) {
       // Cookies are SameSite=Strict; the Origin check covers older browsers and non-browser clients.
       if (req.method !== "GET" && req.method !== "HEAD" && req.headers.get("origin") !== config.origin) throw new HttpError(403)
