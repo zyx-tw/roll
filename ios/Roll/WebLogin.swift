@@ -1,5 +1,6 @@
 import AuthenticationServices
 import CryptoKit
+import DeviceCheck
 import UIKit
 
 // Signs in through roll.zyx.tw in a system browser sheet, with the site's own
@@ -18,9 +19,33 @@ final class WebLogin: NSObject, ASWebAuthenticationPresentationContextProviding 
         guard let code = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "code" })?.value else {
             throw APIError(status: 0)
         }
-        let data = try await Client.shared.send("/api/auth/app/token", method: "POST", json: ["code": code, "verifier": verifier])
+        var body: [String: Any] = ["code": code, "verifier": verifier]
+        lastAttestError = nil
+        do {
+            body["attest"] = try await attest(code: code)
+        } catch {
+            // Without Apple's proof the session can still upload, just not browse.
+            lastAttestError = (error as NSError).localizedDescription
+        }
+        let data = try await Client.shared.send("/api/auth/app/token", method: "POST", json: body)
         guard let token = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["token"] as? String else { throw APIError(status: 0) }
         await Client.shared.setSession(token)
+    }
+
+    static var lastAttestError: String?
+
+    // App Attest: Apple vouches that this is the genuine roll app on a real
+    // device, so the server can give a full session. The proof covers the
+    // server's challenge and this code. A new key each sign-in, which is rare.
+    private static func attest(code: String) async throws -> [String: String] {
+        let service = DCAppAttestService.shared
+        guard service.isSupported else { throw NSError(domain: "roll", code: 1, userInfo: [NSLocalizedDescriptionKey: "App Attest unsupported"]) }
+        let data = try await Client.shared.send("/api/auth/app/challenge", method: "POST", json: [String: String]())
+        guard let challenge = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["challenge"] as? String else { throw APIError(status: 0) }
+        let keyId = try await service.generateKey()
+        let hash = Data(SHA256.hash(data: Data("\(challenge).\(code)".utf8)))
+        let attestation = try await service.attestKey(keyId, clientDataHash: hash)
+        return ["keyId": keyId, "attestation": attestation.base64EncodedString(), "challenge": challenge]
     }
 
     private func open(_ url: URL) async throws -> URL {

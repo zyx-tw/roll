@@ -13,6 +13,7 @@ export type Config = {
   reserveBytes: number
   geonames: string
   iosApps: string[]
+  appAttestDevelopment: boolean
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -34,5 +35,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     reserveBytes: Number(env.ROLL_RESERVE_GB ?? 10) * 1024 ** 3,
     // <team id>.<bundle id> of the iOS apps that may sign in with roll's passkeys.
     iosApps: (env.ROLL_IOS_APPS ?? "68PK3GTMDD.tw.zyx.roll").split(",").filter(Boolean),
+    // Accept App Attest keys from Xcode debug builds too (TestFlight and the App Store use production).
+    appAttestDevelopment: env.ROLL_APPATTEST_DEVELOPMENT === "1",
   }
 }

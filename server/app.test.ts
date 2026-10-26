@@ -412,6 +412,16 @@ describe("iOS app sign-in", () => {
     expect((await as("/api/auth/register/verify", { method: "POST", body: "{}" })).ok).toBe(false)
     expect((await as("/api/upload", { method: "POST", body: JSON.stringify({ name: "app.jpg", size: 1 }) })).status).toBe(200)
   })
+  test("a bad App Attest proof gets nothing and spends the code", async () => {
+    const challenge1 = (await body(post("/api/auth/app/challenge", {}))).challenge as string
+    const c = await code()
+    const attest = { keyId: Buffer.alloc(32).toString("base64"), attestation: Buffer.from("junk").toString("base64"), challenge: challenge1 }
+    expect((await post("/api/auth/app/token", { code: c, verifier, attest })).status).toBe(401)
+    expect((await post("/api/auth/app/token", { code: c, verifier })).status).toBe(401)
+    // A challenge works once, and an unknown one never.
+    const again = await code()
+    expect((await post("/api/auth/app/token", { code: again, verifier, attest })).status).toBe(401)
+  })
 })
 
 test("the iOS app may use the site's passkeys", async () => {

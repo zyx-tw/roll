@@ -10,6 +10,7 @@ import {
 } from "@simplewebauthn/server"
 import type { Config } from "./config"
 import type { Credential, Db, User } from "./db"
+import { verifyAttestation } from "./appattest"
 import { HttpError, createLimiter, json, readJson } from "./http"
 import { log } from "./otel"
 
@@ -26,6 +27,7 @@ const APP_CODE_MS = 60_000
 const MAX_APP_CODES = 1000
 const PKCE = /^[A-Za-z0-9_-]{43,128}$/
 type AppCode = { userId: string; challenge: string; expires: number }
+const ATTEST_MS = 5 * 60_000
 
 type Flow = { challenge: string; kind: "register" | "login"; userId: string | null; expires: number }
 
@@ -88,6 +90,17 @@ export function createAuth(config: Config, db: Db) {
   }
 
   const appCodes = new Map<string, AppCode>()
+  // Challenges the app signs into its App Attest proof, each good once.
+  const attestChallenges = new Map<string, number>()
+
+  // Drops expired entries from the front; every entry lives the same time.
+  function prune<T>(map: Map<string, T>, expires: (value: T) => number) {
+    const now = Date.now()
+    for (const [key, value] of map) {
+      if (expires(value) >= now && map.size < MAX_APP_CODES) break
+      map.delete(key)
+    }
+  }
 
   function startFlow(kind: Flow["kind"], challenge: string, userId: string | null, headers: Headers) {
     const now = Date.now()
@@ -148,19 +161,43 @@ export function createAuth(config: Config, db: Db) {
       const { challenge } = await readJson(req)
       if (typeof challenge !== "string" || !PKCE.test(challenge)) throw new HttpError(400, "bad challenge")
       const now = Date.now()
-      for (const [hash, entry] of appCodes) {
-        if (entry.expires >= now && appCodes.size < MAX_APP_CODES) break
-        appCodes.delete(hash)
-      }
+      prune(appCodes, entry => entry.expires)
       const code = randomBytes(32).toString("base64url")
       appCodes.set(sha256(code), { userId: user.id, challenge, expires: now + APP_CODE_MS })
       return json({ code })
     }
 
+    // A fresh challenge for the app's App Attest proof.
+    if (path === "/api/auth/app/challenge") {
+      prune(attestChallenges, expires => expires)
+      const challenge = randomBytes(32).toString("base64url")
+      attestChallenges.set(challenge, Date.now() + ATTEST_MS)
+      return json({ challenge })
+    }
+
     // The app trades the code and its verifier for a session token, once.
+    // With a valid App Attest proof the session is full; without one it may only upload.
     if (path === "/api/auth/app/token") {
-      const { code, verifier } = await readJson(req)
+      const { code, verifier, attest } = await readJson(req)
       if (typeof code !== "string" || typeof verifier !== "string" || !PKCE.test(verifier) || code.length > 128) throw new HttpError(400)
+      let full = false
+      if (attest !== undefined) {
+        const { keyId, attestation, challenge } = (attest ?? {}) as Record<string, unknown>
+        const expires = typeof challenge === "string" ? attestChallenges.get(challenge) : undefined
+        if (typeof challenge === "string") attestChallenges.delete(challenge)
+        if (typeof keyId !== "string" || typeof attestation !== "string" || keyId.length > 100 || attestation.length > 20_000 || !expires || expires < Date.now()) {
+          appCodes.delete(sha256(code))
+          throw new HttpError(401)
+        }
+        // The proof covers this exact challenge and code.
+        const clientDataHash = createHash("sha256").update(`${challenge}.${code}`).digest()
+        full = verifyAttestation(Buffer.from(attestation, "base64"), Buffer.from(keyId, "base64"), clientDataHash, { appIds: config.iosApps, allowDevelopment: config.appAttestDevelopment })
+        if (!full) {
+          appCodes.delete(sha256(code))
+          log("auth.attest_failed", {}, "WARN")
+          throw new HttpError(401)
+        }
+      }
       const hash = sha256(code)
       const entry = appCodes.get(hash)
       appCodes.delete(hash)
@@ -169,10 +206,11 @@ export function createAuth(config: Config, db: Db) {
         log("auth.app_failed", {}, "WARN")
         throw new HttpError(401)
       }
-      log("auth.login", { user: entry.userId, via: "app" })
+      log("auth.login", { user: entry.userId, via: full ? "app_attested" : "app" })
       // Any app can claim the tw.zyx.roll scheme, so a code may reach an app
-      // that is not roll: its session can add files but never see or remove one.
-      return json({ token: sessionToken(entry.userId, "upload") })
+      // that is not roll: unless Apple vouches for the app, its session can add
+      // files but never see or remove one.
+      return json({ token: sessionToken(entry.userId, full ? null : "upload"), full })
     }
 
     if (path === "/api/auth/logout") {
