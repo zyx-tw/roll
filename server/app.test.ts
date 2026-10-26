@@ -136,9 +136,11 @@ describe("photos", () => {
   test("pages by cursor", async () => {
     const first = await body(req("/api/photos?limit=3", { as: "ann" }))
     expect(first.items).toHaveLength(3)
+    expect(first.total).toBe(4)
     const second = await body(req(`/api/photos?limit=3&cursor=${first.next}`, { as: "ann" }))
     expect(second.items).toHaveLength(1)
     expect(second.next).toBeNull()
+    expect(second.total).toBeUndefined()
   })
   test("each user sees only their own", async () => {
     const ann = (await body(req("/api/photos", { as: "ann" }))).items

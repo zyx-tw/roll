@@ -90,7 +90,9 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
     const more = rows.length > limit
     const items = rows.slice(0, limit)
     const last = items.at(-1)
-    return json({ items: items.map(photo => view(photo, places)), next: more && last ? `${last.taken_at}_${last.id}` : null })
+    // The first page also says how many items match, for "4,429 個項目".
+    const total = cursor ? undefined : (db.query(`select count(*) as n from photos where ${where.join(" and ")}`).get(...args) as { n: number }).n
+    return json({ items: items.map(photo => view(photo, places)), next: more && last ? `${last.taken_at}_${last.id}` : null, total })
   }
 
   function find(user: User, id: string) {
