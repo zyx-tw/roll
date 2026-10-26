@@ -84,6 +84,12 @@ struct QueueView: View {
                 ItemRow(item: item)
             }
             .listStyle(.plain)
+            .safeAreaInset(edge: .bottom) {
+                // Why this session cannot browse, until App Attest works here.
+                if let reason = WebLogin.lastAttestError {
+                    Text(reason).font(.footnote).foregroundStyle(.secondary).padding()
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
