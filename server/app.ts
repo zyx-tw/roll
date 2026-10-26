@@ -3,6 +3,7 @@ import { lstat } from "node:fs/promises"
 import { join } from "node:path"
 import { createAuth } from "./auth"
 import { createEmbed } from "./embed"
+import { createFaces } from "./faces"
 import type { Config } from "./config"
 import { openDb } from "./db"
 import { HttpError, json } from "./http"
@@ -24,8 +25,10 @@ export function createApp(config: Config) {
   const places = loadPlaces(config.geonames)
   const library = createLibrary(config, db, places)
   const playback = createPlayback(config, db, library)
-  const smart = createSmart(config, db, library, createEmbed(config))
-  const photos = createPhotos(config, db, library, places, playback, smart)
+  const embed = createEmbed(config)
+  const smart = createSmart(config, db, library, embed)
+  const faces = createFaces(config, db, library, embed)
+  const photos = createPhotos(config, db, library, places, playback, smart, faces)
   const upload = createUpload(config, library)
   const host = new URL(config.origin).host
 
@@ -67,6 +70,7 @@ export function createApp(config: Config) {
       const isUpload = url.pathname === "/api/upload" || url.pathname.startsWith("/api/upload/")
       if (user.scope === "upload" && !isUpload) throw new HttpError(403)
       if (url.pathname.startsWith("/api/photos")) return photos.handle(req, url, user)
+      if (url.pathname.startsWith("/api/people") || url.pathname.startsWith("/api/faces/")) return faces.handle(req, url, user)
       if (isUpload) return upload.handle(req, url, user)
       throw new HttpError(404)
     }
@@ -90,5 +94,5 @@ export function createApp(config: Config) {
     return response
   }
 
-  return { fetch, db, library, playback, smart }
+  return { fetch, db, library, playback, smart, faces }
 }

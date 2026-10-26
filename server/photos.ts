@@ -12,6 +12,7 @@ import { ensureDir, resolveExisting, userRoot } from "./paths"
 import type { Places } from "./places"
 import { parseDateQuery } from "./search"
 import { kindClause, type Smart } from "./smart"
+import type { Faces } from "./faces"
 
 const PAGE = 120
 const MAX_PAGE = 500
@@ -31,11 +32,11 @@ export function view(photo: Photo, places?: Places) {
   }
 }
 
-// One search box. Each word is a date, a town, a country or a kind of photo
-// (自拍, 截圖, 影片), and narrows the timeline; every other word is free text,
+// One search box. Each word is a date, a town, a country, a kind of photo
+// (自拍, 截圖, 影片) or a person the user named, and narrows the timeline; every other word is free text,
 // matched by meaning and by text in the photo (smart.ts). A word with no
 // spaces may start or end with a known word: "京都拉麵" is 京都 and 拉麵.
-export function searchClause(q: string, places: Places) {
+export function searchClause(q: string, places: Places, person?: (word: string) => number | null) {
   const where: string[] = []
   const args: (string | number)[] = []
   const free: string[] = []
@@ -49,6 +50,12 @@ export function searchClause(q: string, places: Places) {
     const kind = kindClause(word)
     if (kind) {
       where.push(`(${kind})`)
+      return true
+    }
+    const id = person?.(word) ?? null
+    if (id !== null) {
+      where.push("exists (select 1 from faces f where f.photo_id = p.id and f.user_id = p.user_id and f.person_id = ?)")
+      args.push(id)
       return true
     }
     const country = places.country(word)
@@ -88,13 +95,13 @@ export function searchClause(q: string, places: Places) {
   return { where, args, free }
 }
 
-export function createPhotos(config: Config, db: Db, library: ReturnType<typeof createLibrary>, places: Places, playback: ReturnType<typeof createPlayback>, smart: Smart) {
+export function createPhotos(config: Config, db: Db, library: ReturnType<typeof createLibrary>, places: Places, playback: ReturnType<typeof createPlayback>, smart: Smart, faces: Faces) {
   async function timeline(user: User, url: URL) {
     const limit = Math.min(MAX_PAGE, Math.max(1, Number(url.searchParams.get("limit")) || PAGE))
     const q = url.searchParams.get("q")?.slice(0, 100) ?? ""
     const where = ["p.user_id = ?", "p.status = 'ready'"]
     const args: (string | number)[] = [user.id]
-    const clause = q ? searchClause(q, places) : null
+    const clause = q ? searchClause(q, places, word => faces.personId(user.id, word)) : null
     if (clause) {
       where.push(...clause.where)
       args.push(...clause.args)
@@ -220,7 +227,7 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
   }
 
   async function handle(req: Request, url: URL, user: User): Promise<Response> {
-    if (url.pathname === "/api/photos/pending" && req.method === "GET") return json({ ...library.pending(user.id), indexing: smart.pending(user.id) })
+    if (url.pathname === "/api/photos/pending" && req.method === "GET") return json({ ...library.pending(user.id), indexing: smart.pending(user.id) + faces.pending(user.id) })
     const target = /^\/api\/photos\/([^/]+)$/.exec(url.pathname)
     if (req.method === "DELETE" && target) return remove(user, target[1])
     if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405)
@@ -236,7 +243,8 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
       // The stored size is the preview's; report the original's, turned the way the preview shows it.
       const [long, short] = pixels.length === 2 ? [Math.max(...pixels), Math.min(...pixels)] : [Math.max(photo.width, photo.height), Math.min(photo.width, photo.height)]
       const [width, height] = photo.height > photo.width ? [short, long] : [long, short]
-      return json({ ...view(photo, places), name: photo.path.split("/").pop(), size: photo.size, lat: photo.lat, lon: photo.lon, camera: { ...camera, width, height } })
+      const people = (db.query("select distinct ps.name from faces f join persons ps on ps.id = f.person_id where f.photo_id = ? and f.user_id = ? and ps.user_id = ? order by ps.name").all(photo.id, user.id, user.id) as { name: string }[]).map(r => r.name)
+      return json({ ...view(photo, places), name: photo.path.split("/").pop(), size: photo.size, lat: photo.lat, lon: photo.lon, people, camera: { ...camera, width, height } })
     }
     throw new HttpError(404)
   }

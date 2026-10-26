@@ -50,6 +50,7 @@ const scan = () =>
     .then(() => app.library.drained())
     .then(() => app.playback.pump())
     .then(() => app.smart.pump())
+    .then(() => app.faces.pump())
     .catch(error => log("library.scan_failed", { error: String(error) }, "ERROR"))
 void scan()
 setInterval(scan, config.scanMinutes * 60_000)
@@ -57,7 +58,7 @@ setInterval(scan, config.scanMinutes * 60_000)
 // search, within a minute.
 setInterval(() => {
   void app.playback.pump()
-  void app.smart.pump()
+  void app.smart.pump().then(() => app.faces.pump())
 }, 60_000)
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {

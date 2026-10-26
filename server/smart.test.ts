@@ -36,6 +36,12 @@ function startFake() {
       if (req.headers.get("authorization") !== `Bearer ${TOKEN}`) return new Response("no", { status: 401 })
       const body = (await req.json()) as { kind?: string; items?: { text?: string; image_b64?: string }[]; image_b64?: string }
       const path = new URL(req.url).pathname
+      if (path === "/faces") {
+        const size = webpSize(Buffer.from(body.image_b64!, "base64"))
+        // One person in every ann photo but the screenshot (and in bob's).
+        const faces = size && size.width !== 120 ? [{ box: [10, 10, 90, 90], score: 0.9, vector: axis(100) }, { box: [0, 0, 20, 20], score: 0.9, vector: axis(101) }] : []
+        return Response.json({ width: size?.width ?? 0, height: size?.height ?? 0, faces })
+      }
       if (path === "/ocr") {
         seen.ocr++
         const size = webpSize(Buffer.from(body.image_b64!, "base64"))
@@ -53,9 +59,14 @@ function startFake() {
   })
 }
 
-function req(path: string, as: string) {
-  const headers = new Headers({ host: "roll.test", cookie: `roll_session=session-${as}` })
-  return app.fetch(new Request(ROLL + path, { headers }), "1.1.1.1")
+function req(path: string, as: string, init: RequestInit = {}) {
+  const headers = new Headers({ host: "roll.test", cookie: `roll_session=session-${as}`, origin: ROLL })
+  return app.fetch(new Request(ROLL + path, { ...init, headers }), "1.1.1.1")
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const call = async (path: string, as: string, method: string, value: unknown): Promise<{ status: number; body: any }> => {
+  const res = await req(path, as, { method, body: JSON.stringify(value) })
+  return { status: res.status, body: await res.json() }
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const search = async (q: string, as = "ann"): Promise<any> => (await req(`/api/photos?q=${encodeURIComponent(q)}`, as)).json()
@@ -94,6 +105,7 @@ beforeAll(async () => {
   await app.library.scan()
   await app.library.drained()
   await app.smart.pump()
+  await app.faces.pump()
   for (const row of app.db.query("select id, path from photos").all() as { id: string; path: string }[]) ids.set(row.path.split(".")[0], row.id)
 })
 
@@ -156,6 +168,66 @@ describe("search", () => {
     } finally {
       fakeUp = true
     }
+  })
+})
+
+describe("people", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const people = async (as = "ann"): Promise<any> => (await req("/api/people", as)).json()
+  test("faces too small are dropped; one person's faces form a group", async () => {
+    const { people: named, groups } = await people()
+    expect(named).toEqual([])
+    expect(groups).toHaveLength(1)
+    // beach, street and me; the 20 px faces never count.
+    expect(groups[0].size).toBe(3)
+  })
+  test("a face crop is a small image, only for its owner", async () => {
+    const face = (await people()).groups[0].faces[0]
+    const res = await req(`/api/faces/${face}`, "ann")
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("image/webp")
+    expect((await req(`/api/faces/${face}`, "bob")).status).toBe(404)
+  })
+  test("another user cannot name these faces", async () => {
+    const group = (await people()).groups[0]
+    expect((await call("/api/people/name", "bob", "POST", { faces: group.all, name: "Ann" })).status).toBe(404)
+  })
+  test("naming a group makes a person, and search finds them by name", async () => {
+    const group = (await people()).groups[0]
+    expect((await call("/api/people/name", "ann", "POST", { faces: group.all.slice(0, 1), name: " 媽媽 " })).status).toBe(200)
+    const after = await people()
+    // The other two matched the named face.
+    expect(after.people).toEqual([{ id: expect.any(Number), name: "媽媽", photos: 3, cover: group.all[0] }])
+    expect(after.groups).toEqual([])
+    const found = (await search("媽媽")).items.map((p: { id: string }) => p.id).sort()
+    expect(found).toEqual([idOf("beach"), idOf("street"), idOf("me")].sort())
+    expect((await search("媽媽 自拍")).items.map((p: { id: string }) => p.id)).toEqual([idOf("me")])
+    expect((await search("媽媽", "bob")).items.map((p: { id: string }) => p.id)).not.toContain(idOf("me"))
+  })
+  test("a photo's details list its people", async () => {
+    const detail = (await (await req(`/api/photos/${idOf("me")}`, "ann")).json()) as { people: string[] }
+    expect(detail.people).toEqual(["媽媽"])
+  })
+  test("rename, merge and forget a person", async () => {
+    const id = (await people()).people[0].id
+    expect((await call(`/api/people/${id}`, "bob", "PATCH", { name: "x" })).status).toBe(404)
+    expect((await call(`/api/people/${id}`, "ann", "PATCH", { name: "Mom" })).status).toBe(200)
+    expect((await people()).people[0].name).toBe("Mom")
+    expect((await call(`/api/people/${id}`, "ann", "DELETE", null)).status).toBe(200)
+    const after = await people()
+    expect(after.people).toEqual([])
+    expect(after.groups[0].size).toBe(3)
+  })
+  test("bad input is refused", async () => {
+    expect((await call("/api/people/name", "ann", "POST", { faces: [], name: "x" })).status).toBe(400)
+    expect((await call("/api/people/name", "ann", "POST", { faces: ["../../etc/pass"], name: "x" })).status).toBe(400)
+    const group = (await people()).groups[0]
+    expect((await call("/api/people/name", "ann", "POST", { faces: group.all, name: "x".repeat(41) })).status).toBe(400)
+  })
+  test("set aside: a group named null leaves the list", async () => {
+    const group = (await people()).groups[0]
+    expect((await call("/api/people/name", "ann", "POST", { faces: group.all, name: null })).status).toBe(200)
+    expect((await people()).groups).toEqual([])
   })
 })
 
