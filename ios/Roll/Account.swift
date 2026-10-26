@@ -20,8 +20,11 @@ final class Account {
         do {
             try await Passkey.signIn()
             await refresh()
+        } catch let error as APIError {
+            self.error = "登入失敗（伺服器 \(error.status)）"
         } catch {
-            self.error = "登入失敗"
+            let ns = error as NSError
+            self.error = "登入失敗（\(ns.domain) \(ns.code)）"
         }
     }
 

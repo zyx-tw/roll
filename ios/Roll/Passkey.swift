@@ -4,6 +4,8 @@ import UIKit
 // Signs in with the passkey made on roll.zyx.tw (iCloud Keychain shares it).
 final class Passkey: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
     private var continuation: CheckedContinuation<ASAuthorizationPlatformPublicKeyCredentialAssertion, Error>?
+    // The controller must outlive performRequests(), or iOS cancels the request before showing the sheet.
+    private var controller: ASAuthorizationController?
 
     static func signIn() async throws {
         let data = try await Client.shared.send("/api/auth/login/options", method: "POST", json: [String: String]())
@@ -34,6 +36,7 @@ final class Passkey: NSObject, ASAuthorizationControllerDelegate, ASAuthorizatio
         let controller = ASAuthorizationController(authorizationRequests: [request])
         controller.delegate = self
         controller.presentationContextProvider = self
+        self.controller = controller
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             controller.performRequests()
@@ -47,11 +50,13 @@ final class Passkey: NSObject, ASAuthorizationControllerDelegate, ASAuthorizatio
             continuation?.resume(throwing: APIError(status: 0))
         }
         continuation = nil
+        self.controller = nil
     }
 
     func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
         continuation?.resume(throwing: error)
         continuation = nil
+        self.controller = nil
     }
 
     func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
