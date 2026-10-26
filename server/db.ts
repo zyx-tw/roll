@@ -96,6 +96,31 @@ export function openDb(path: string) {
   // "upload" sessions (from the iOS app) may only send files; null is a full session.
   const sessionColumns = new Set((db.query("pragma table_info(sessions)").all() as { name: string }[]).map(c => c.name))
   if (!sessionColumns.has("scope")) db.exec("alter table sessions add column scope text")
+  // Search by meaning: one row per photo version that was read, and its
+  // vectors (one for a photo, a few frames for a video). front and screenshot
+  // come from the original's EXIF; text is what OCR read, text_key the same
+  // for matching (NFKC, lower case, no spaces).
+  db.exec(`
+    create table if not exists photo_index (
+      photo_id text primary key references photos(id) on delete cascade,
+      user_id text not null,
+      version integer not null,
+      model text not null,
+      front integer not null default 0,
+      screenshot integer not null default 0,
+      text text not null default '',
+      text_key text not null default '',
+      error text,
+      indexed_at integer not null
+    );
+    create index if not exists photo_index_user on photo_index(user_id);
+    create table if not exists photo_vectors (
+      photo_id text not null references photos(id) on delete cascade,
+      frame integer not null,
+      vector blob not null,
+      primary key (photo_id, frame)
+    );
+  `)
   return db
 }
 

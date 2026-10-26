@@ -15,6 +15,9 @@ export type Config = {
   iosApps: string[]
   appAttestDevelopment: boolean
   vaapi: string | null
+  // The embed service (zyx1121/embed) for search by meaning and text in photos; null turns it off.
+  embedUrl: string | null
+  embedToken: string
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -40,5 +43,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     appAttestDevelopment: env.ROLL_APPATTEST_DEVELOPMENT === "1",
     // The GPU for playback copies; "" turns them off.
     vaapi: env.ROLL_VAAPI === "" ? null : (env.ROLL_VAAPI ?? "/dev/dri/renderD128"),
+    embedUrl: env.ROLL_EMBED_URL ? env.ROLL_EMBED_URL.replace(/\/$/, "") : null,
+    embedToken: env.ROLL_EMBED_TOKEN ?? "",
   }
 }

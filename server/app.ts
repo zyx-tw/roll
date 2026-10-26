@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs"
 import { lstat } from "node:fs/promises"
 import { join } from "node:path"
 import { createAuth } from "./auth"
+import { createEmbed } from "./embed"
 import type { Config } from "./config"
 import { openDb } from "./db"
 import { HttpError, json } from "./http"
@@ -11,6 +12,7 @@ import { cleanRel, within } from "./paths"
 import { createPhotos } from "./photos"
 import { createPlayback } from "./playback"
 import { loadPlaces } from "./places"
+import { createSmart } from "./smart"
 import { createUpload } from "./upload"
 
 const APP_CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
@@ -22,7 +24,8 @@ export function createApp(config: Config) {
   const places = loadPlaces(config.geonames)
   const library = createLibrary(config, db, places)
   const playback = createPlayback(config, db, library)
-  const photos = createPhotos(config, db, library, places, playback)
+  const smart = createSmart(config, db, library, createEmbed(config))
+  const photos = createPhotos(config, db, library, places, playback, smart)
   const upload = createUpload(config, library)
   const host = new URL(config.origin).host
 
@@ -87,5 +90,5 @@ export function createApp(config: Config) {
     return response
   }
 
-  return { fetch, db, library, playback }
+  return { fetch, db, library, playback, smart }
 }

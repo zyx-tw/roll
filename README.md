@@ -15,7 +15,8 @@ You copy the originals from a phone to the server. roll reads them, makes small 
 - **Sign in with a passkey**: Touch ID or Face ID, no password.
 - **Invite a person**: a one-time link registers a passkey for one account.
 - **Browse a timeline**: a masonry wall in capture order, loaded page by page.
-- **Search in one box**: dates (`4/15`, `2026 年 4 月`), towns (`京都`, `Kyoto`) and countries (`日本`), combined; press `/` or Cmd+K.
+- **Search in one box**: dates (`4/15`, `2026 年 4 月`), towns (`京都`, `Kyoto`), countries (`日本`) and kinds (`自拍`, `截圖`, `影片`, `原況`, `全景`), combined; press `/` or Cmd+K.
+- **Search by meaning**: other words find photos and video frames that show them (`海邊`, `京都拉麵`), and text inside photos comes first (screenshots, menus, tickets).
 - **Upload**: pick files or drop them on the page; originals keep every byte.
 - **Delete**: a photo moves to `<user>/.trash/<day>/`, out of the timeline.
 - **Open a photo**: a full-screen viewer with arrow keys, swipe and download of the original.
@@ -52,6 +53,8 @@ Open the printed link and register a passkey. Copy photos into `data/library/lok
 | `ROLL_WORKERS` | previews made at once | `2` |
 | `ROLL_GEONAMES` | GeoNames `cities1000.txt`, for town names | `<ROLL_DATA>/geo/cities1000.txt` |
 | `ROLL_RESERVE_GB` | disk space an upload must leave free | `10` |
+| `ROLL_EMBED_URL` | the zyx1121/embed service, for search by meaning and text in photos | off |
+| `ROLL_EMBED_TOKEN` | its bearer token | none |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | where OTLP/HTTP JSON logs go | off |
 
 ## How it works
@@ -65,6 +68,8 @@ flowchart LR
 
 A scan walks each user's folder. It reads capture time and GPS with exiftool, and makes a 2048 px and a 640 px WebP with vips. A video gives its first frame through ffmpeg. A photo and a video with the same name form a Live Photo. Every API lookup takes the photo id and the signed-in user together.
 
+After the previews, each photo goes once to the embed service: a vector for the 2048 px preview and its text (OCR), or vectors for 3 frames of a video. EXIF marks selfies and screenshots. A search with free words ranks the photos its other words allow: text matches first, then photos whose meaning is 1.5 standard deviations above the mean.
+
 ## For AI agents
 
 Facts for coding agents and LLM tools. The rules for changing the code are in [AGENTS.md](AGENTS.md).
@@ -75,9 +80,9 @@ Facts for coding agents and LLM tools. The rules for changing the code are in [A
 - **Install**: `bun install`, plus `exiftool`, `vips` with HEIF and `ffmpeg` on the host
 - **Run**: `bun run start`
 - **Verify**: `bun test server`
-- **Config**: `ROLL_ORIGIN`, `ROLL_DATA`, `ROLL_LIBRARY`, `ROLL_DIST`, `ROLL_PORT`, `ROLL_SCAN_MINUTES`, `ROLL_WORKERS`, `ROLL_RESERVE_GB`, `ROLL_GEONAMES`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`
-- **Secrets**: the OTLP header lives in `/etc/roll/env` on the server.
-- **Limits**: Search covers dates, towns and countries so far; meaning, people and text in photos come later.
+- **Config**: `ROLL_ORIGIN`, `ROLL_DATA`, `ROLL_LIBRARY`, `ROLL_DIST`, `ROLL_PORT`, `ROLL_SCAN_MINUTES`, `ROLL_WORKERS`, `ROLL_RESERVE_GB`, `ROLL_GEONAMES`, `ROLL_EMBED_URL`, `ROLL_EMBED_TOKEN`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`
+- **Secrets**: the OTLP header and `ROLL_EMBED_TOKEN` live in `/etc/roll/env` on the server.
+- **Limits**: Search by meaning needs the embed service; people (faces) come later.
 
 ## Development
 
