@@ -24,7 +24,10 @@ final class Account {
             self.error = "登入失敗（伺服器 \(error.status)）"
         } catch {
             let ns = error as NSError
-            self.error = "登入失敗（\(ns.domain) \(ns.code)）"
+            var parts = ["\(ns.code)", ns.localizedDescription]
+            if let reason = ns.localizedFailureReason { parts.append(reason) }
+            if let under = ns.userInfo[NSUnderlyingErrorKey] as? NSError { parts.append("\(under.domain) \(under.code) \(under.localizedDescription)") }
+            self.error = "登入失敗：" + parts.joined(separator: "\n")
         }
     }
 

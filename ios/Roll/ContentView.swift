@@ -16,7 +16,7 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                 if let error = account.error {
-                    Text(error).foregroundStyle(.red)
+                    Text(error).foregroundStyle(.red).font(.footnote).textSelection(.enabled).padding(.horizontal, 24)
                 }
             }
         case .signedIn:
