@@ -1,3 +1,4 @@
+import Photos
 import PhotosUI
 import SwiftUI
 
@@ -53,6 +54,19 @@ struct QueueView: View {
                     .accessibilityLabel("選擇照片")
                 }
             }
+            #if DEBUG
+            // Simulator tests: `-rollUploadRecent <n>` sends the newest n items without the picker.
+            .task {
+                let count = UserDefaults.standard.integer(forKey: "rollUploadRecent")
+                guard count > 0, await Library.authorize() else { return }
+                let options = PHFetchOptions()
+                options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+                options.fetchLimit = count
+                var ids: [String] = []
+                PHAsset.fetchAssets(with: options).enumerateObjects { asset, _, _ in ids.append(asset.localIdentifier) }
+                await uploader.add(ids)
+            }
+            #endif
             .onChange(of: picked) {
                 let ids = picked.compactMap(\.itemIdentifier)
                 picked = []
