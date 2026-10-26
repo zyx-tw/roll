@@ -19,7 +19,9 @@ final class Uploader {
     }
 
     var items: [Item] = []
-    private var running = false
+    // Counts finished runs, so the gallery knows when to look for new photos.
+    var finished = 0
+    private(set) var running = false
     private let doneKey = "uploaded"
 
     // Items already sent, by library id, so picking one again does not send it twice.
@@ -44,6 +46,18 @@ final class Uploader {
             if let asset = assets[id] { loadThumbnail(asset) }
         }
         await run(assets)
+    }
+
+    // "上傳中 3/10 45%" while a run is going.
+    var summary: String? {
+        guard running else { return nil }
+        let total = items.count
+        let done = items.filter { $0.status == .done }.count
+        let current = items.first { if case .uploading = $0.status { true } else if case .fetching = $0.status { true } else { false } }
+        var text = "上傳中 \(min(done + 1, total))/\(total)"
+        if case let .uploading(f)? = current?.status { text += " \(Int(f * 100))%" }
+        if case let .fetching(f)? = current?.status { text = "從 iCloud 下載 \(Int(f * 100))%" }
+        return text
     }
 
     func retry() async {
@@ -77,6 +91,7 @@ final class Uploader {
         UIApplication.shared.isIdleTimerDisabled = true
         let background = UIApplication.shared.beginBackgroundTask(withName: "upload")
         defer {
+            finished += 1
             running = false
             UIApplication.shared.isIdleTimerDisabled = false
             UIApplication.shared.endBackgroundTask(background)

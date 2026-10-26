@@ -19,8 +19,56 @@ struct ContentView: View {
                     Text(error).foregroundStyle(.red).font(.footnote).textSelection(.enabled).padding(.horizontal, 24)
                 }
             }
-        case .signedIn:
+        case .signedIn(full: true):
+            LibraryView()
+        case .signedIn(full: false):
             QueueView()
+        }
+    }
+}
+
+// The whole library, newest first, with upload in the corner.
+struct LibraryView: View {
+    @Environment(Account.self) private var account
+    @Environment(Uploader.self) private var uploader
+    @State private var picked: [PhotosPickerItem] = []
+
+    var body: some View {
+        NavigationStack {
+            GalleryView()
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Menu {
+                            if uploader.items.contains(where: { if case .failed = $0.status { true } else { false } }) {
+                                Button("重試失敗的項目", systemImage: "arrow.clockwise") { Task { await uploader.retry() } }
+                            }
+                            Button("登出", systemImage: "rectangle.portrait.and.arrow.right") { Task { await account.signOut() } }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        PhotosPicker(selection: $picked, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current, photoLibrary: .shared()) {
+                            Image(systemName: "plus")
+                        }
+                        .accessibilityLabel("上傳")
+                    }
+                }
+                .safeAreaInset(edge: .bottom) {
+                    if let summary = uploader.summary {
+                        Text(summary)
+                            .font(.footnote.monospacedDigit())
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .glassEffect()
+                            .padding(.bottom, 8)
+                    }
+                }
+                .onChange(of: picked) {
+                    let ids = picked.compactMap(\.itemIdentifier)
+                    picked = []
+                    Task { await uploader.add(ids) }
+                }
         }
     }
 }

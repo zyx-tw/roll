@@ -29,6 +29,7 @@ actor Client {
     }
 
     var signedIn: Bool { cookies["roll_session"] != nil }
+    var sessionToken: String? { cookies["roll_session"] }
 
     func setSession(_ token: String?) {
         cookies["roll_session"] = token
