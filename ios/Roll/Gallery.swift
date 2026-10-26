@@ -41,9 +41,19 @@ struct PhotoGrid: View {
     let gallery: Gallery
     var topInset: CGFloat = 0
     var bottomInset: CGFloat = 0
+    // The top-most visible item while scrolled up from the bottom; nil at the bottom.
+    var onScrolledUp: (Photo?) -> Void = { _ in }
     @State private var open: Photo?
+    @State private var visible: [String] = []
+    @State private var atBottom = true
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
+
+    private func report(_ shown: [Photo]) {
+        guard !atBottom else { return onScrolledUp(nil) }
+        let ids = Set(visible)
+        onScrolledUp(shown.first { ids.contains($0.id) })
+    }
 
     var body: some View {
         let shown = Array(gallery.photos.reversed())
@@ -58,8 +68,19 @@ struct PhotoGrid: View {
                         .onAppear { if photo == shown.first { Task { await gallery.more() } } }
                 }
             }
+            .scrollTargetLayout()
             .padding(.top, topInset)
             .padding(.bottom, bottomInset)
+        }
+        .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.3) { ids in
+            visible = ids
+            report(shown)
+        }
+        .onScrollGeometryChange(for: Bool.self) { geo in
+            geo.contentOffset.y + geo.containerSize.height >= geo.contentSize.height + geo.contentInsets.bottom - 200
+        } action: { _, bottom in
+            atBottom = bottom
+            report(shown)
         }
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
@@ -217,6 +238,14 @@ struct SearchSheet: View {
             .onAppear { focused = true }
             .presentationDragIndicator(.visible)
     }
+}
+
+// "2026 年 10 月 25 日", the day a photo was taken, in Taiwan time.
+func formatDay(_ ms: Double) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Taipei")!
+    let c = calendar.dateComponents([.year, .month, .day], from: Date(timeIntervalSince1970: ms / 1000))
+    return "\(c.year!) 年 \(c.month!) 月 \(c.day!) 日"
 }
 
 func formatDuration(_ seconds: Double) -> String {

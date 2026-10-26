@@ -35,9 +35,12 @@ struct LibraryView: View {
     @State private var gallery = Gallery()
     @State private var picked: [PhotosPickerItem] = []
     @State private var searching = false
+    @State private var scrolledTo: Photo?
 
     var body: some View {
-        PhotoGrid(gallery: gallery, topInset: 120, bottomInset: 96)
+        PhotoGrid(gallery: gallery, topInset: 120, bottomInset: 96) { photo in
+            if photo?.id != scrolledTo?.id { scrolledTo = photo }
+        }
             .ignoresSafeArea(edges: [.top, .bottom])
             .refreshable { await gallery.reload() }
             .task { await gallery.reload() }
@@ -54,12 +57,19 @@ struct LibraryView: View {
 
     private var header: some View {
         HStack(alignment: .top) {
+            // At the bottom: roll and the count. Scrolled up: the date in view, as in Photos.
             VStack(alignment: .leading, spacing: 0) {
-                Text("roll").font(.largeTitle.bold())
-                if let total = gallery.total {
-                    Text("\(total.formatted()) 個項目").font(.subheadline.weight(.semibold))
+                if let photo = scrolledTo {
+                    Text(formatDay(photo.takenAt)).font(.largeTitle.bold()).lineLimit(1).minimumScaleFactor(0.6)
+                    if let place = photo.place { Text(place).font(.subheadline.weight(.semibold)) }
+                } else {
+                    Text("roll").font(.largeTitle.bold())
+                    if let total = gallery.total {
+                        Text("\(total.formatted()) 個項目").font(.subheadline.weight(.semibold))
+                    }
                 }
             }
+            .animation(.easeInOut(duration: 0.2), value: scrolledTo?.id)
             Spacer()
             Menu {
                 if uploader.items.contains(where: { if case .failed = $0.status { true } else { false } }) {
