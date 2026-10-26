@@ -1,28 +1,30 @@
 import AVKit
 import SwiftUI
 
+// Newest first from the server; shown oldest at the top, newest at the bottom.
 @Observable
 final class Gallery {
     var photos: [Photo] = []
+    var total: Int?
+    var query = ""
     private var next: String?
     private var loading = false
-    private(set) var done = false
 
+    // Replaces the list only once the first page is in, so a refresh never blanks the grid.
     func reload() async {
-        next = nil
-        done = false
-        photos = []
-        await more()
+        guard let page = try? await Client.shared.photos(after: nil, query: query) else { return }
+        photos = page.items
+        next = page.next
+        total = page.total
     }
 
     func more() async {
-        guard !loading, !done else { return }
+        guard !loading, let cursor = next else { return }
         loading = true
         defer { loading = false }
-        guard let page = try? await Client.shared.photos(after: next) else { return }
+        guard let page = try? await Client.shared.photos(after: cursor, query: query) else { return }
         photos.append(contentsOf: page.items)
         next = page.next
-        done = page.next == nil
     }
 
     // After an upload the server still makes previews: reload when they are ready.
@@ -35,28 +37,56 @@ final class Gallery {
     }
 }
 
-struct GalleryView: View {
-    @Environment(Uploader.self) private var uploader
-    @State private var gallery = Gallery()
+struct PhotoGrid: View {
+    let gallery: Gallery
+    var topInset: CGFloat = 0
+    var bottomInset: CGFloat = 0
+    // The top-most visible item while scrolled up from the bottom; nil at the bottom.
+    var onScrolledUp: (Photo?) -> Void = { _ in }
     @State private var open: Photo?
+    @State private var visible: [String] = []
+    @State private var atBottom = true
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
 
+    private func report(_ shown: [Photo]) {
+        guard !atBottom else { return onScrolledUp(nil) }
+        let ids = Set(visible)
+        onScrolledUp(shown.first { ids.contains($0.id) })
+    }
+
     var body: some View {
+        let shown = Array(gallery.photos.reversed())
+        // Blank cells at the top, so the newest row ends at the bottom right, as in Photos.
+        let pad = (3 - shown.count % 3) % 3
         ScrollView {
             LazyVGrid(columns: columns, spacing: 2) {
-                ForEach(gallery.photos) { photo in
+                ForEach(0..<pad, id: \.self) { _ in Color.clear.aspectRatio(1, contentMode: .fit) }
+                ForEach(shown) { photo in
                     Thumb(photo: photo)
                         .onTapGesture { open = photo }
-                        .onAppear { if photo == gallery.photos.last { Task { await gallery.more() } } }
+                        .onAppear { if photo == shown.first { Task { await gallery.more() } } }
                 }
             }
+            .scrollTargetLayout()
+            .padding(.top, topInset)
+            .padding(.bottom, bottomInset)
         }
-        .refreshable { await gallery.reload() }
-        .task { await gallery.reload() }
-        .onChange(of: uploader.finished) { Task { await gallery.waitForPreviews() } }
+        .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.3) { ids in
+            visible = ids
+            report(shown)
+        }
+        .onScrollGeometryChange(for: Bool.self) { geo in
+            geo.contentOffset.y + geo.containerSize.height >= geo.contentSize.height + geo.contentInsets.bottom - 200
+        } action: { _, bottom in
+            atBottom = bottom
+            report(shown)
+        }
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .defaultScrollAnchor(.bottom, for: .sizeChanges)
         .fullScreenCover(item: $open) { photo in
-            Viewer(photos: gallery.photos, start: photo)
+            Viewer(photos: shown, start: photo)
+                .presentationBackground(.clear)
         }
     }
 }
@@ -76,10 +106,10 @@ struct Thumb: View {
             .overlay(alignment: .bottomTrailing) {
                 if let duration = photo.duration, photo.isVideo {
                     Text(formatDuration(duration))
-                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .font(.caption.monospacedDigit().weight(.semibold))
                         .foregroundStyle(.white)
                         .shadow(radius: 2)
-                        .padding(4)
+                        .padding(6)
                 }
             }
             .clipped()
@@ -88,9 +118,12 @@ struct Thumb: View {
     }
 }
 
+// Full screen, swipe sideways for the next item, pull down to close. No buttons.
 struct Viewer: View {
     let photos: [Photo]
-    @State var current: Photo?
+    @State private var current: Photo?
+    @State private var drag: CGSize = .zero
+    @State private var chrome = true
     @Environment(\.dismiss) private var dismiss
 
     init(photos: [Photo], start: Photo) {
@@ -98,36 +131,49 @@ struct Viewer: View {
         _current = State(initialValue: start)
     }
 
+    private var progress: Double { min(max(drag.height / 300, 0), 1) }
+
     var body: some View {
-        TabView(selection: $current) {
-            ForEach(photos) { photo in
-                Page(photo: photo, active: current == photo)
-                    .tag(Optional(photo))
-            }
-        }
-        .tabViewStyle(.page(indexDisplayMode: .never))
-        .background(.black)
-        .ignoresSafeArea()
-        .overlay(alignment: .topLeading) {
-            Button { dismiss() } label: {
-                Image(systemName: "xmark").font(.title3).padding(12)
-            }
-            .buttonStyle(.glass)
-            .padding(.leading, 16)
-            .accessibilityLabel("關閉")
-        }
-        .overlay(alignment: .bottom) {
-            if let current {
-                VStack(spacing: 2) {
-                    Text(formatTaken(current.takenAt))
-                    if let place = current.place { Text(place) }
+        ZStack {
+            Color.black.opacity(1 - progress).ignoresSafeArea()
+            TabView(selection: $current) {
+                ForEach(photos) { photo in
+                    Page(photo: photo, active: current == photo)
+                        .tag(Optional(photo))
                 }
-                .font(.footnote)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .ignoresSafeArea()
+            .scaleEffect(1 - progress * 0.3)
+            .offset(x: drag.width * 0.5, y: max(drag.height, 0))
+        }
+        .overlay(alignment: .top) {
+            if chrome, let current, progress == 0 {
+                VStack(spacing: 2) {
+                    Text(formatTaken(current.takenAt)).font(.subheadline.weight(.semibold))
+                    if let place = current.place { Text(place).font(.caption) }
+                }
                 .foregroundStyle(.white)
                 .shadow(radius: 3)
-                .padding(.bottom, 24)
+                .padding(.top, 8)
             }
         }
+        .onTapGesture { chrome.toggle() }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 20)
+                .onChanged { value in
+                    // Only a mostly downward pull closes; sideways swipes page.
+                    if value.translation.height > abs(value.translation.width) || drag != .zero { drag = value.translation }
+                }
+                .onEnded { value in
+                    if drag != .zero && (value.translation.height > 120 || value.predictedEndTranslation.height > 300) {
+                        dismiss()
+                    } else {
+                        withAnimation(.spring(duration: 0.3)) { drag = .zero }
+                    }
+                }
+        )
+        .statusBarHidden(!chrome)
     }
 
     struct Page: View {
@@ -159,6 +205,47 @@ struct Viewer: View {
             .onDisappear { player?.pause() }
         }
     }
+}
+
+// Search like Photos: a field, results as you type, newest at the bottom.
+struct SearchSheet: View {
+    @State private var gallery = Gallery()
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        PhotoGrid(gallery: gallery, topInset: 8, bottomInset: 80)
+            .overlay(alignment: .bottom) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("", text: $text)
+                        .focused($focused)
+                        .submitLabel(.search)
+                        .autocorrectionDisabled()
+                }
+                .padding(.horizontal, 16)
+                .frame(height: 48)
+                .glassEffect(.regular.interactive(), in: .capsule)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
+            .task(id: text) {
+                try? await Task.sleep(for: .milliseconds(250))
+                gallery.query = text.trimmingCharacters(in: .whitespaces)
+                if gallery.query.isEmpty { gallery.photos = []; return }
+                await gallery.reload()
+            }
+            .onAppear { focused = true }
+            .presentationDragIndicator(.visible)
+    }
+}
+
+// "2026 年 10 月 25 日", the day a photo was taken, in Taiwan time.
+func formatDay(_ ms: Double) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Taipei")!
+    let c = calendar.dateComponents([.year, .month, .day], from: Date(timeIntervalSince1970: ms / 1000))
+    return "\(c.year!) 年 \(c.month!) 月 \(c.day!) 日"
 }
 
 func formatDuration(_ seconds: Double) -> String {

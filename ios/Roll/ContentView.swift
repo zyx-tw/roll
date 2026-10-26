@@ -27,49 +27,97 @@ struct ContentView: View {
     }
 }
 
-// The whole library, newest first, with upload in the corner.
+// The whole library like Photos: title and count top left, account top right,
+// upload bottom left, search bottom right, newest at the bottom.
 struct LibraryView: View {
     @Environment(Account.self) private var account
     @Environment(Uploader.self) private var uploader
+    @State private var gallery = Gallery()
     @State private var picked: [PhotosPickerItem] = []
+    @State private var searching = false
+    @State private var scrolledTo: Photo?
 
     var body: some View {
-        NavigationStack {
-            GalleryView()
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Menu {
-                            if uploader.items.contains(where: { if case .failed = $0.status { true } else { false } }) {
-                                Button("重試失敗的項目", systemImage: "arrow.clockwise") { Task { await uploader.retry() } }
-                            }
-                            Button("登出", systemImage: "rectangle.portrait.and.arrow.right") { Task { await account.signOut() } }
-                        } label: {
-                            Image(systemName: "ellipsis")
-                        }
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        PhotosPicker(selection: $picked, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current, photoLibrary: .shared()) {
-                            Image(systemName: "plus")
-                        }
-                        .accessibilityLabel("上傳")
-                    }
-                }
-                .safeAreaInset(edge: .bottom) {
-                    if let summary = uploader.summary {
-                        Text(summary)
-                            .font(.footnote.monospacedDigit())
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .glassEffect()
-                            .padding(.bottom, 8)
-                    }
-                }
-                .onChange(of: picked) {
-                    let ids = picked.compactMap(\.itemIdentifier)
-                    picked = []
-                    Task { await uploader.add(ids) }
-                }
+        PhotoGrid(gallery: gallery, topInset: 120, bottomInset: 96) { photo in
+            if photo?.id != scrolledTo?.id { scrolledTo = photo }
         }
+            .ignoresSafeArea(edges: [.top, .bottom])
+            .refreshable { await gallery.reload() }
+            .task { await gallery.reload() }
+            .onChange(of: uploader.finished) { Task { await gallery.waitForPreviews() } }
+            .overlay(alignment: .top) { header }
+            .overlay(alignment: .bottom) { footer }
+            .sheet(isPresented: $searching) { SearchSheet() }
+            .onChange(of: picked) {
+                let ids = picked.compactMap(\.itemIdentifier)
+                picked = []
+                Task { await uploader.add(ids) }
+            }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top) {
+            // At the bottom: roll and the count. Scrolled up: the date in view, as in Photos.
+            VStack(alignment: .leading, spacing: 0) {
+                if let photo = scrolledTo {
+                    Text(formatDay(photo.takenAt)).font(.largeTitle.bold()).lineLimit(1).minimumScaleFactor(0.6)
+                    if let place = photo.place { Text(place).font(.subheadline.weight(.semibold)) }
+                } else {
+                    Text("roll").font(.largeTitle.bold())
+                    if let total = gallery.total {
+                        Text("\(total.formatted()) 個項目").font(.subheadline.weight(.semibold))
+                    }
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: scrolledTo?.id)
+            Spacer()
+            Menu {
+                if uploader.items.contains(where: { if case .failed = $0.status { true } else { false } }) {
+                    Button("重試失敗的項目", systemImage: "arrow.clockwise") { Task { await uploader.retry() } }
+                }
+                Button("登出", systemImage: "rectangle.portrait.and.arrow.right") { Task { await account.signOut() } }
+            } label: {
+                Image(systemName: "person.fill").font(.title3).frame(width: 48, height: 48)
+            }
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel("帳號")
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 24)
+        .background(alignment: .top) {
+            LinearGradient(colors: [.black.opacity(0.55), .clear], startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea(edges: .top)
+                .allowsHitTesting(false)
+        }
+        .shadow(color: .black.opacity(0.25), radius: 4)
+    }
+
+    private var footer: some View {
+        HStack(alignment: .bottom) {
+            PhotosPicker(selection: $picked, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current, photoLibrary: .shared()) {
+                Image(systemName: "plus").font(.title2.weight(.medium)).frame(width: 56, height: 56)
+            }
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel("上傳")
+            Spacer()
+            if let summary = uploader.summary {
+                Text(summary)
+                    .font(.footnote.monospacedDigit())
+                    .padding(.horizontal, 14)
+                    .frame(height: 40)
+                    .glassEffect(.regular, in: .capsule)
+                Spacer()
+            }
+            Button { searching = true } label: {
+                Image(systemName: "magnifyingglass").font(.title2.weight(.medium)).frame(width: 56, height: 56)
+            }
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel("搜尋")
+        }
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 4)
     }
 }
 

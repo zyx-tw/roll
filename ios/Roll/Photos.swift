@@ -23,12 +23,14 @@ nonisolated struct Photo: Decodable, Identifiable, Hashable, Sendable {
 nonisolated struct Page: Decodable, Sendable {
     let items: [Photo]
     let next: String?
+    let total: Int?
 }
 
 extension Client {
-    func photos(after cursor: String?) async throws -> Page {
+    func photos(after cursor: String?, query: String = "") async throws -> Page {
         var path = "/api/photos?limit=120"
         if let cursor { path += "&cursor=\(cursor)" }
+        if !query.isEmpty, let q = query.addingPercentEncoding(withAllowedCharacters: .alphanumerics) { path += "&q=\(q)" }
         return try JSONDecoder().decode(Page.self, from: try await send(path))
     }
 
