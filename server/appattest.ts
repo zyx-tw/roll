@@ -36,6 +36,7 @@ const NONCE_OID = Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0
 
 // One DER element at `at`: its tag, where its content starts and ends.
 function tlv(der: Buffer, at: number) {
+  if (at + 2 > der.length) throw new Error("short")
   const tag = der[at]
   let length = der[at + 1]
   let start = at + 2
@@ -50,17 +51,44 @@ function tlv(der: Buffer, at: number) {
   return { tag, start, end: start + length }
 }
 
-// The nonce in the leaf: Extension { OID, [critical], OCTET STRING { SEQUENCE { [1] { OCTET STRING } } } }.
+// The children of the DER element whose content spans [start, end).
+function children(der: Buffer, start: number, end: number) {
+  const out: ReturnType<typeof tlv>[] = []
+  for (let at = start; at < end; ) {
+    const el = tlv(der, at)
+    if (el.end > end) throw new Error("bad nesting")
+    out.push(el)
+    at = el.end
+  }
+  return out
+}
+
+// The nonce in the leaf, read from the signed TBSCertificate's extensions:
+// Certificate { tbs { ..., [3] { Extensions { Extension { OID, [critical], OCTET STRING {
+//   SEQUENCE { [1] { OCTET STRING } } } } } } } }. Never a search over raw bytes.
 function certNonce(der: Buffer) {
-  const at = der.indexOf(NONCE_OID)
-  if (at < 0 || der.indexOf(NONCE_OID, at + 1) >= 0) return null
-  let next = tlv(der, at + NONCE_OID.length)
-  if (next.tag === 0x01) next = tlv(der, next.end)
-  if (next.tag !== 0x04) return null
-  const seq = tlv(der, next.start)
-  const tagged = tlv(der, seq.start)
-  const octets = tlv(der, tagged.start)
-  if (seq.tag !== 0x30 || tagged.tag !== 0xa1 || octets.tag !== 0x04 || octets.end - octets.start !== 32) return null
+  const cert = tlv(der, 0)
+  if (cert.tag !== 0x30 || cert.end !== der.length) return null
+  const [tbs] = children(der, cert.start, cert.end)
+  if (tbs?.tag !== 0x30) return null
+  const wrapper = children(der, tbs.start, tbs.end).find(el => el.tag === 0xa3)
+  if (!wrapper) return null
+  const [list] = children(der, wrapper.start, wrapper.end)
+  if (list?.tag !== 0x30) return null
+  const found = children(der, list.start, list.end).filter(ext => {
+    const [oid] = children(der, ext.start, ext.end)
+    return oid?.tag === 0x06 && der.subarray(oid.start - 2, oid.end).equals(NONCE_OID)
+  })
+  if (found.length !== 1) return null
+  const parts = children(der, found[0].start, found[0].end)
+  const value = parts.at(-1)
+  if (!value || value.tag !== 0x04 || parts.length > 3) return null
+  const [seq] = children(der, value.start, value.end)
+  if (seq?.tag !== 0x30 || seq.end !== value.end) return null
+  const [tagged] = children(der, seq.start, seq.end)
+  if (tagged?.tag !== 0xa1 || tagged.end !== seq.end) return null
+  const [octets] = children(der, tagged.start, tagged.end)
+  if (octets?.tag !== 0x04 || octets.end !== tagged.end || octets.end - octets.start !== 32) return null
   return der.subarray(octets.start, octets.end)
 }
 
@@ -77,10 +105,16 @@ export function verifyAttestation(attestation: Uint8Array, keyId: Uint8Array, cl
     const authData = Buffer.from(object.get("authData") as Uint8Array)
     if (!x5c || x5c.length !== 2 || authData.length < 55) return false
 
-    // 1. The chain ends at Apple's App Attestation root, and every certificate is current.
+    // 1. Two plain DER certificates, nothing more: what is verified is exactly
+    //    what is read. The chain ends at Apple's App Attestation root through an
+    //    intermediate CA that is not the root, the leaf is not a CA, and every
+    //    certificate is current.
     const now = options.now ?? new Date()
     const root = new NodeCert(options.root ?? APPLE_ROOT)
-    const [leaf, middle] = x5c.map(der => new NodeCert(Buffer.from(der)))
+    const ders = x5c.map(der => Buffer.from(der))
+    const [leaf, middle] = ders.map(der => new NodeCert(der))
+    if (!ders.every((der, i) => [leaf, middle][i].raw.equals(der))) return false
+    if (leaf.ca || !middle.ca || middle.fingerprint256 === root.fingerprint256 || leaf.fingerprint256 === middle.fingerprint256) return false
     for (const cert of [leaf, middle, root]) {
       if (new Date(cert.validFrom) > now || new Date(cert.validTo) < now) return false
     }
@@ -88,12 +122,14 @@ export function verifyAttestation(attestation: Uint8Array, keyId: Uint8Array, cl
     if (!leaf.checkIssued(middle) || !leaf.verify(middle.publicKey)) return false
 
     // 2. The leaf carries sha256(authData || clientDataHash) as its nonce.
-    const nonce = certNonce(Buffer.from(x5c[0]))
+    const nonce = certNonce(ders[0])
     if (!nonce || !nonce.equals(sha256(authData, clientDataHash))) return false
 
-    // 3. The key id is the hash of the leaf's public key (the 65-byte EC point).
+    // 3. The key id is the hash of the leaf's P-256 public key (the 65-byte uncompressed point).
+    if (leaf.publicKey.asymmetricKeyType !== "ec" || leaf.publicKey.asymmetricKeyDetails?.namedCurve !== "prime256v1") return false
     const spki = leaf.publicKey.export({ type: "spki", format: "der" })
-    const point = spki.subarray(spki.length - 65)
+    if (spki.length !== 91 || spki[26] !== 0x04) return false
+    const point = spki.subarray(26)
     if (!sha256(point).equals(Buffer.from(keyId))) return false
 
     // 4. authData: our app id, a fresh key (counter 0), the right environment, the same key id.

@@ -96,6 +96,26 @@ describe("App Attest", () => {
     // Expired by the time it is checked.
     expect(verifyAttestation(attestation, keyId, hash, { ...ok, now: new Date(Date.now() + 400 * day) })).toBe(false)
   })
+  test("a root posing as the chain, or bytes after a certificate, are refused", async () => {
+    const c = await chain()
+    const root = c.root.toString("pem")
+    const { attestation, keyId } = await attest(c, hash)
+    const object = (await import("@simplewebauthn/server/helpers")).decodeAttestationObject(new Uint8Array(attestation))
+    const authData = object.get("authData") as Uint8Array
+    const forged = (x5c: Uint8Array[]) =>
+      isoCBOR.encode(new Map<string, unknown>([["fmt", "apple-appattest"], ["attStmt", new Map<string, unknown>([["x5c", x5c], ["receipt", new Uint8Array(4)]])], ["authData", authData]]) as never)
+    const rootDer = new Uint8Array(c.root.rawData)
+    const nonce = sha256(Buffer.from(authData), hash)
+    const tail = Buffer.concat([Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x08, 0x02, 0x04, 0x26, 0x30, 0x24, 0xa1, 0x22, 0x04, 0x20]), nonce])
+    // The root PEM with a forged nonce after it, as leaf and as intermediate.
+    const pemWithTail = new Uint8Array(Buffer.concat([Buffer.from(root), tail]))
+    expect(verifyAttestation(forged([pemWithTail, new Uint8Array(Buffer.from(root))]), keyId, hash, { appIds: [APP], root })).toBe(false)
+    // The root DER with trailing bytes, and the root as its own intermediate.
+    expect(verifyAttestation(forged([new Uint8Array(Buffer.concat([rootDer, tail])), rootDer]), keyId, hash, { appIds: [APP], root })).toBe(false)
+    expect(verifyAttestation(forged([new Uint8Array(c.mid.rawData), rootDer]), keyId, hash, { appIds: [APP], root })).toBe(false)
+    // The intermediate as the leaf.
+    expect(verifyAttestation(forged([new Uint8Array(c.mid.rawData), new Uint8Array(c.mid.rawData)]), keyId, hash, { appIds: [APP], root })).toBe(false)
+  })
   test("development keys pass only when allowed", async () => {
     const c = await chain()
     const { attestation, keyId } = await attest(c, hash, { aaguid: Buffer.from("appattestdevelop") })
