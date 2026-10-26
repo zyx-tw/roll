@@ -533,6 +533,14 @@ function SearchDialog({ open, initial, onClose, onSubmit }: { open: boolean; ini
               className="pl-9"
             />
           </div>
+          {!value.trim() && (
+            <People
+              onPick={name => {
+                onSubmit(name)
+                onClose()
+              }}
+            />
+          )}
           {shown && shown.length === 0 && <p className="text-center text-body text-muted-foreground">找不到符合「{value.trim()}」的照片</p>}
           {shown && shown.length > 0 && (
             <ul className="grid max-h-120 grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4">
@@ -556,5 +564,109 @@ function SearchDialog({ open, initial, onClose, onSubmit }: { open: boolean; ini
         </form>
       </DialogContent>
     </Dialog>
+  )
+}
+
+type Person = { id: number; name: string; photos: number; cover: string }
+type FaceGroup = { size: number; faces: string[]; all: string[] }
+
+// The people the user named, and groups of faces still to name. A person
+// opens a search for their name; a group takes a name, or is set aside.
+function People({ onPick }: { onPick: (name: string) => void }) {
+  const [data, setData] = useState<{ people: Person[]; groups: FaceGroup[] } | null>(null)
+  const [naming, setNaming] = useState<number | null>(null)
+  const [name, setName] = useState("")
+
+  const load = useCallback(() => {
+    api<{ people: Person[]; groups: FaceGroup[] }>("/api/people").then(setData, () => setData({ people: [], groups: [] }))
+  }, [])
+  useEffect(load, [load])
+
+  async function decide(group: FaceGroup, value: string | null) {
+    try {
+      await post("/api/people/name", { faces: group.all, name: value })
+      setNaming(null)
+      setName("")
+      load()
+    } catch {
+      toast.error("沒有存到")
+    }
+  }
+
+  if (!data || (data.people.length === 0 && data.groups.length === 0)) return null
+  return (
+    <div className="flex max-h-120 flex-col gap-6 overflow-y-auto">
+      {data.people.length > 0 && (
+        <section aria-label="人物" className="flex flex-col gap-3">
+          <h2 className="text-body text-muted-foreground">人物</h2>
+          <ul className="flex flex-wrap gap-4">
+            {data.people.map(person => (
+              <li key={person.id}>
+                <button type="button" onClick={() => onPick(person.name)} className="flex w-16 flex-col items-center gap-1 rounded-control outline-offset-2 focus-visible:outline-2">
+                  <img src={`/api/faces/${person.cover}`} alt="" className="size-16 rounded-full bg-muted object-cover" />
+                  <span className="w-full truncate text-center text-caption">{person.name}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {data.groups.length > 0 && (
+        <section aria-label="未命名" className="flex flex-col gap-3">
+          <h2 className="text-body text-muted-foreground">未命名</h2>
+          <ul className="flex flex-col gap-4">
+            {data.groups.map((group, index) => (
+              <li key={group.all[0]} className="flex flex-col gap-2">
+                <div className="flex items-center gap-2 overflow-hidden">
+                  {group.faces.slice(0, 6).map(face => (
+                    <img key={face} src={`/api/faces/${face}`} alt="" className="size-12 shrink-0 rounded-full bg-muted object-cover" />
+                  ))}
+                  <span className="text-caption text-muted-foreground tabular-nums">{group.size}</span>
+                </div>
+                {naming === index ? (
+                  <div className="flex gap-2">
+                    <Input
+                      value={name}
+                      onChange={event => setName(event.target.value)}
+                      onKeyDown={event => {
+                        if (event.key === "Enter" && name.trim()) {
+                          event.preventDefault()
+                          void decide(group, name.trim())
+                        }
+                      }}
+                      autoFocus
+                      aria-label="名字"
+                      maxLength={40}
+                    />
+                    <Button type="button" disabled={!name.trim()} onClick={() => void decide(group, name.trim())}>
+                      確定
+                    </Button>
+                    <Button type="button" variant="ghost" onClick={() => setNaming(null)}>
+                      取消
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setNaming(index)
+                        setName("")
+                      }}
+                    >
+                      命名
+                    </Button>
+                    <Button type="button" variant="ghost" onClick={() => void decide(group, null)}>
+                      略過
+                    </Button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
   )
 }

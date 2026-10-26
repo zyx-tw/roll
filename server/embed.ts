@@ -3,6 +3,7 @@
 import type { Config } from "./config"
 
 export type Line = { text: string; score: number }
+export type Face = { box: [number, number, number, number]; score: number; vector: number[] }
 
 export class EmbedDown extends Error {}
 
@@ -53,6 +54,12 @@ export function createEmbed(config: Config) {
       cache.set(key, vector)
       if (cache.size > QUERY_CACHE) cache.delete(cache.keys().next().value!)
       return vector
+    },
+
+    // Faces in the image, with boxes in its own pixels.
+    async faces(image: Uint8Array) {
+      const out = await call<{ width: number; height: number; faces: Face[] }>("/faces", { image_b64: b64(image) }, 120_000)
+      return out.faces
     },
 
     async ocr(image: Uint8Array) {

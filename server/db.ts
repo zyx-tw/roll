@@ -121,6 +121,37 @@ export function openDb(path: string) {
       primary key (photo_id, frame)
     );
   `)
+  // Faces: found once per photo version (face_scans), named by the user. A
+  // person belongs to one user. labeled_by is "user" when the user decided
+  // (a person, or person_id null for "not someone to name"), "auto" when
+  // matched to a face the user named, null when nobody decided.
+  db.exec(`
+    create table if not exists persons (
+      id integer primary key autoincrement,
+      user_id text not null references users(id),
+      name text not null,
+      created_at integer not null,
+      unique (user_id, name)
+    );
+    create table if not exists faces (
+      id text primary key,
+      photo_id text not null references photos(id) on delete cascade,
+      user_id text not null,
+      box text not null,
+      score real not null,
+      vector blob not null,
+      person_id integer references persons(id) on delete set null,
+      labeled_by text,
+      created_at integer not null
+    );
+    create index if not exists faces_photo on faces(photo_id);
+    create index if not exists faces_user on faces(user_id, person_id);
+    create table if not exists face_scans (
+      photo_id text primary key references photos(id) on delete cascade,
+      version integer not null,
+      model text not null
+    );
+  `)
   return db
 }
 
