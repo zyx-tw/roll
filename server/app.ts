@@ -9,6 +9,7 @@ import { createLibrary } from "./library"
 import { log } from "./otel"
 import { cleanRel, within } from "./paths"
 import { createPhotos } from "./photos"
+import { createPlayback } from "./playback"
 import { loadPlaces } from "./places"
 import { createUpload } from "./upload"
 
@@ -20,7 +21,8 @@ export function createApp(config: Config) {
   const auth = createAuth(config, db)
   const places = loadPlaces(config.geonames)
   const library = createLibrary(config, db, places)
-  const photos = createPhotos(config, db, library, places)
+  const playback = createPlayback(config, db, library)
+  const photos = createPhotos(config, db, library, places, playback)
   const upload = createUpload(config, library)
   const host = new URL(config.origin).host
 
@@ -85,5 +87,5 @@ export function createApp(config: Config) {
     return response
   }
 
-  return { fetch, db, library }
+  return { fetch, db, library, playback }
 }

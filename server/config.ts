@@ -14,6 +14,7 @@ export type Config = {
   geonames: string
   iosApps: string[]
   appAttestDevelopment: boolean
+  vaapi: string | null
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -37,5 +38,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     iosApps: (env.ROLL_IOS_APPS ?? "68PK3GTMDD.tw.zyx.roll").split(",").filter(Boolean),
     // Accept App Attest keys from Xcode debug builds too (TestFlight and the App Store use production).
     appAttestDevelopment: env.ROLL_APPATTEST_DEVELOPMENT === "1",
+    // The GPU for playback copies; "" turns them off.
+    vaapi: env.ROLL_VAAPI === "" ? null : (env.ROLL_VAAPI ?? "/dev/dri/renderD128"),
   }
 }

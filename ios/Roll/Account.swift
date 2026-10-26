@@ -50,6 +50,7 @@ final class Account {
 
     func signOut() async {
         await Client.shared.logout()
+        await ImageCache.shared.clear()
         state = .signedOut
     }
 }

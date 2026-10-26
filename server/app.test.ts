@@ -60,7 +60,7 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "roll-test-"))
   mkdirSync(join(dir, "dist/assets"), { recursive: true })
   writeFileSync(join(dir, "dist/index.html"), "<!doctype html><title>roll</title>")
-  const config = loadConfig({ ROLL_DATA: join(dir, "data"), ROLL_DIST: join(dir, "dist"), ROLL_ORIGIN: ROLL, ROLL_RESERVE_GB: "0" })
+  const config = loadConfig({ ROLL_DATA: join(dir, "data"), ROLL_DIST: join(dir, "dist"), ROLL_ORIGIN: ROLL, ROLL_RESERVE_GB: "0", ROLL_VAAPI: "" })
   app = createApp(config)
   signIn("ann")
   signIn("bob")
@@ -141,6 +141,16 @@ describe("photos", () => {
     expect([detail.camera.width, detail.camera.height]).toEqual(first.width > first.height ? [300, 200] : [200, 300])
     // Bob cannot read Ann's details.
     expect((await req(`/api/photos/${first.id}`, { as: "bob" })).status).toBe(404)
+  })
+  test("a video without a playback copy plays its original", async () => {
+    const video = (await body(req("/api/photos", { as: "ann" }))).items.find((p: { kind: string; live: boolean }) => p.kind === "video" && !p.live)
+    const [play, original] = await Promise.all([req(`/api/photos/${video.id}/play`, { as: "ann" }), req(`/api/photos/${video.id}/original`, { as: "ann" })])
+    expect(play.status).toBe(200)
+    expect(new Uint8Array(await play.arrayBuffer())).toEqual(new Uint8Array(await original.arrayBuffer()))
+    expect((await req(`/api/photos/${video.id}/play`, { as: "bob" })).status).toBe(404)
+    // No GPU here: making copies does nothing and leaves nothing behind.
+    await app.playback.pump()
+    expect(await app.playback.path(video.id)).toBeNull()
   })
   test("pages by cursor", async () => {
     const first = await body(req("/api/photos?limit=3", { as: "ann" }))

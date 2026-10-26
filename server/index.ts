@@ -44,9 +44,16 @@ const server = Bun.serve({
 log("server.start", { port: server.port })
 
 // Scan at start, then on a timer. Files arrive by rsync, outside the app.
-const scan = () => app.library.scan().catch(error => log("library.scan_failed", { error: String(error) }, "ERROR"))
+const scan = () =>
+  app.library
+    .scan()
+    .then(() => app.library.drained())
+    .then(() => app.playback.pump())
+    .catch(error => log("library.scan_failed", { error: String(error) }, "ERROR"))
 void scan()
 setInterval(scan, config.scanMinutes * 60_000)
+// Uploads scan on their own; this picks up their videos within a minute.
+setInterval(() => void app.playback.pump(), 60_000)
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, async () => {

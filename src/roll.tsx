@@ -229,7 +229,7 @@ export function RollApp() {
   )
 }
 
-const media = (photo: Photo, part: "thumb" | "large" | "original" | "live") => `/api/photos/${photo.id}/${part}?v=${photo.v}`
+const media = (photo: Photo, part: "thumb" | "large" | "original" | "live" | "play") => `/api/photos/${photo.id}/${part}?v=${photo.v}`
 
 // Columns by the width the grid has: 2 on a phone, up to 5 on a wide screen.
 function columnsFor(width: number) {
@@ -451,7 +451,7 @@ function Viewer({ photos, index, onIndex, onClose, onDeleted }: { photos: Photo[
       </header>
       <div className="relative flex min-h-0 flex-1 items-center justify-center px-2 pb-4 sm:px-16">
         {photo.kind === "video" ? (
-          <video key={photo.id} src={media(photo, "original")} poster={media(photo, "large")} controls autoPlay playsInline className="max-h-full max-w-full" />
+          <video key={photo.id} src={media(photo, "play")} poster={media(photo, "large")} controls autoPlay playsInline className="max-h-full max-w-full" />
         ) : (
           <div
             className="relative flex max-h-full max-w-full items-center justify-center"
