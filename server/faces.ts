@@ -34,6 +34,16 @@ const dot = (a: Float32Array, b: Float32Array) => {
   for (let i = 0; i < a.length; i++) sum += a[i] * b[i]
   return sum
 }
+// Two boxes this much the same (intersection over union) are one face found again.
+const SAME_FACE = 0.5
+export function overlap(a: number[], b: number[]) {
+  const w = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]))
+  const h = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]))
+  const both = w * h
+  const area = (box: number[]) => (box[2] - box[0]) * (box[3] - box[1])
+  return both > 0 ? both / (area(a) + area(b) - both) : 0
+}
+
 const toVector = (blob: Uint8Array) => new Float32Array(blob.buffer.slice(blob.byteOffset, blob.byteOffset + blob.byteLength))
 
 // Groups of faces likely to be one person (DBSCAN on cosine similarity),
@@ -119,11 +129,22 @@ export function createFaces(config: Config, db: Db, library: ReturnType<typeof c
     db.transaction(() => {
       const now = db.query("select version from photos where id = ? and user_id = ?").get(photo.id, photo.user_id) as { version: number } | null
       if (!now || now.version !== photo.version) return
+      // What the user decided on the old faces carries over to the new face in the same place.
+      // The same place alone is not enough: the photo may have been replaced, so the face must also look the same.
+      const decided = (db.query("select box, vector, person_id from faces where photo_id = ? and user_id = ? and labeled_by = 'user'").all(photo.id, photo.user_id) as { box: string; vector: Uint8Array; person_id: number | null }[]).map(f => ({
+        box: JSON.parse(f.box) as number[],
+        vector: toVector(f.vector),
+        person: f.person_id,
+      }))
       db.query("delete from faces where photo_id = ? and user_id = ?").run(photo.id, photo.user_id)
-      const insert = db.query("insert into faces (id, photo_id, user_id, box, score, vector, created_at) values (?, ?, ?, ?, ?, ?, ?)")
+      const insert = db.query("insert into faces (id, photo_id, user_id, box, score, vector, person_id, labeled_by, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
       for (const face of found) {
         const vector = Float32Array.from(face.vector)
-        insert.run(newId(), photo.id, photo.user_id, JSON.stringify(face.box.map(n => Math.round(n))), face.score, new Uint8Array(vector.buffer), Date.now())
+        const box = face.box.map(n => Math.round(n))
+        // Each old decision goes to one new face at most.
+        const at = decided.findIndex(d => overlap(d.box, box) >= SAME_FACE && dot(d.vector, vector) >= MATCH)
+        const same = at === -1 ? null : decided.splice(at, 1)[0]
+        insert.run(newId(), photo.id, photo.user_id, JSON.stringify(box), face.score, new Uint8Array(vector.buffer), same?.person ?? null, same ? "user" : null, Date.now())
       }
       db.query("insert into face_scans (photo_id, version, model) values (?, ?, ?) on conflict(photo_id) do update set version = excluded.version, model = excluded.model").run(photo.id, photo.version, FACE_MODEL)
     })()

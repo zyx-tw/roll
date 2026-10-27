@@ -14,6 +14,8 @@ export const IMAGE = new Set([".jpg", ".jpeg", ".heic", ".heif", ".png", ".webp"
 export const VIDEO = new Set([".mov", ".mp4", ".m4v"])
 // Taiwan time when a file says nothing about its zone.
 const DEFAULT_OFFSET = "+08:00"
+// Renders a photo gets per server start before a failure is left alone.
+const TRIES = 3
 export const SIZES = { large: "2048x2048>", thumb: "640x2000>" } as const
 
 type Found = { path: string; size: number; mtime: number; kind: Photo["kind"]; live: string | null }
@@ -98,11 +100,19 @@ async function exiftool(paths: string[]): Promise<Map<string, Record<string, unk
 
 // Walks one user's folder. A photo and a short video with the same name in the
 // same folder are a Live Photo: the video rides along and is not listed alone.
-export async function walk(root: string): Promise<Found[]> {
+// A folder or file that fails to read goes into `unread`, so the scan does not
+// take a hiccup for a deletion.
+export async function walk(root: string, unread: string[] = []): Promise<Found[]> {
   const files: { path: string; size: number; mtime: number; ext: string }[] = []
   async function visit(dir: string) {
     // The root must read; a missing mount must not look like an empty library.
-    const entries = dir === root ? await readdir(dir, { withFileTypes: true }) : await readdir(dir, { withFileTypes: true }).catch(() => [])
+    const entries =
+      dir === root
+        ? await readdir(dir, { withFileTypes: true })
+        : await readdir(dir, { withFileTypes: true }).catch(() => {
+            unread.push(relative(root, dir).split(sep).join("/") + "/")
+            return []
+          })
     for (const entry of entries) {
       if (entry.name.startsWith(".") || entry.name.startsWith("@")) continue
       const full = join(dir, entry.name)
@@ -111,7 +121,9 @@ export async function walk(root: string): Promise<Found[]> {
         const ext = extname(entry.name).toLowerCase()
         if (!IMAGE.has(ext) && !VIDEO.has(ext)) continue
         const info = await stat(full).catch(() => null)
-        if (info) files.push({ path: relative(root, full).split(sep).join("/"), size: info.size, mtime: Math.floor(info.mtimeMs), ext })
+        const path = relative(root, full).split(sep).join("/")
+        if (!info) unread.push(path)
+        else files.push({ path, size: info.size, mtime: Math.floor(info.mtimeMs), ext })
       }
     }
   }
@@ -133,6 +145,10 @@ export function createLibrary(config: Config, db: Db, places: Places) {
   const forgotten = new Set<string>()
   // Files being rendered right now, per user, for the upload status.
   const busy = new Map<string, number>()
+  // Files queued or rendering, as "<user>/<path>", so an overlapping scan does not queue them again.
+  const queued = new Set<string>()
+  // Failed renders per photo since start: a failed photo is tried again on later scans, up to TRIES renders.
+  const failures = new Map<string, number>()
   let scanning: Promise<void> | null = null
   let idle: (() => void)[] = []
 
@@ -182,6 +198,7 @@ export function createLibrary(config: Config, db: Db, places: Places) {
     } catch (error) {
       status = "failed"
       // Tool errors quote the file path, so only the tool and its exit code go out.
+      failures.set(id, (failures.get(id) ?? 0) + 1)
       log("library.render_failed", { id: id.slice(0, 4), kind: found.kind, error: /^Error: (\S+ exited \d+)/.exec(String(error))?.[1] ?? "error" }, "WARN")
     }
     // Deleted during the render: drop what it made and write no row.
@@ -189,6 +206,7 @@ export function createLibrary(config: Config, db: Db, places: Places) {
       await rm(cacheDir(id), { recursive: true, force: true })
       return
     }
+    if (status === "ready") failures.delete(id)
     const town = meta.lat !== null && meta.lon !== null ? places.nearest(meta.lat, meta.lon) : null
     db.query(
       `insert into photos (id, user_id, path, size, mtime, kind, taken_at, width, height, duration, lat, lon, live_path, status, version, place_id, country)
@@ -209,11 +227,14 @@ export function createLibrary(config: Config, db: Db, places: Places) {
       const job = queue.shift()!
       running++
       busy.set(job.userId, (busy.get(job.userId) ?? 0) + 1)
-      process(job).finally(() => {
-        running--
-        busy.set(job.userId, busy.get(job.userId)! - 1)
-        pump()
-      })
+      process(job)
+        .catch(error => log("library.process_failed", { id: job.id.slice(0, 4), error: String(error).split(":")[0] }, "ERROR"))
+        .finally(() => {
+          queued.delete(`${job.userId}/${job.found.path}`)
+          running--
+          busy.set(job.userId, busy.get(job.userId)! - 1)
+          pump()
+        })
     }
     if (running === 0 && queue.length === 0) {
       for (const done of idle) done()
@@ -231,16 +252,38 @@ export function createLibrary(config: Config, db: Db, places: Places) {
       log("library.no_folder", { user: userId }, "WARN")
       return
     }
-    const found = await walk(root)
+    const unread: string[] = []
+    const found = await walk(root, unread)
     const known = new Map(
-      (db.query("select id, path, size, mtime, live_path, version from photos where user_id = ?").all(userId) as Pick<Photo, "id" | "path" | "size" | "mtime" | "live_path" | "version">[]).map(p => [p.path, p]),
+      (db.query("select id, path, size, mtime, kind, taken_at, live_path, version, status from photos where user_id = ?").all(userId) as Pick<Photo, "id" | "path" | "size" | "mtime" | "kind" | "taken_at" | "live_path" | "version" | "status">[]).map(p => [p.path, p]),
     )
-    const changed = found.filter(f => {
-      const old = known.get(f.path)
-      return !old || old.size !== f.size || old.mtime !== f.mtime || old.live_path !== f.live
-    })
     const seen = new Set(found.map(f => f.path))
-    const gone = [...known.values()].filter(p => !seen.has(p.path))
+    // A path that failed to read, or sits under a folder that did, is not gone.
+    // Nor is one with a job still queued or rendering: the next scan decides it.
+    const missed = (path: string) => queued.has(`${userId}/${path}`) || unread.some(u => (u.endsWith("/") ? path.startsWith(u) : path === u))
+    let gone = [...known.values()].filter(p => !seen.has(p.path) && !missed(p.path))
+    // A moved or renamed file keeps its row, and with it the title, albums and
+    // faces: one gone row and one new file with the same size, time and kind,
+    // and the same capture time inside the file.
+    const sameFile = (p: { size: number; mtime: number; kind: string }) => `${p.size}:${p.mtime}:${p.kind}`
+    const goneBy = Map.groupBy(gone, sameFile)
+    const fresh = [...Map.groupBy(found.filter(f => !known.has(f.path) && !queued.has(`${userId}/${f.path}`)), sameFile)].filter(([key, files]) => files.length === 1 && goneBy.get(key)?.length === 1)
+    const freshTags = fresh.length ? await exiftool(fresh.map(([, files]) => join(root, files[0].path))) : new Map()
+    const moved = new Set<string>()
+    for (const [key, files] of fresh) {
+      const rows = goneBy.get(key)!
+      if ((readMeta(freshTags.get(join(root, files[0].path)) ?? {}).takenAt ?? files[0].mtime) !== rows[0].taken_at) continue
+      db.query("update photos set path = ?, live_path = ? where id = ? and user_id = ?").run(files[0].path, files[0].live, rows[0].id, userId)
+      known.delete(rows[0].path)
+      known.set(files[0].path, { ...rows[0], path: files[0].path, live_path: files[0].live })
+      moved.add(rows[0].id)
+    }
+    gone = gone.filter(p => !moved.has(p.id))
+    const changed = found.filter(f => {
+      if (queued.has(`${userId}/${f.path}`)) return false
+      const old = known.get(f.path)
+      return !old || old.size !== f.size || old.mtime !== f.mtime || old.live_path !== f.live || (old.status === "failed" && (failures.get(old.id) ?? 0) < TRIES)
+    })
     for (const photo of gone) {
       db.query("delete from photos where id = ?").run(photo.id)
       await rm(cacheDir(photo.id), { recursive: true, force: true })
@@ -248,9 +291,12 @@ export function createLibrary(config: Config, db: Db, places: Places) {
     const tags = await exiftool(changed.map(f => join(root, f.path)))
     for (const f of changed) {
       const old = known.get(f.path)
-      queue.push({ userId, found: f, meta: readMeta(tags.get(join(root, f.path)) ?? {}), id: old?.id ?? newId(), version: (old?.version ?? 0) + 1 })
+      const meta = readMeta(tags.get(join(root, f.path)) ?? {})
+      queued.add(`${userId}/${f.path}`)
+      queue.push({ userId, found: f, meta, id: old?.id ?? newId(), version: (old?.version ?? 0) + 1 })
     }
-    if (changed.length || gone.length) log("library.scan", { user: userId, files: found.length, changed: changed.length, removed: gone.length })
+    if (changed.length || gone.length || moved.size || unread.length)
+      log("library.scan", { user: userId, files: found.length, changed: changed.length, removed: gone.length, moved: moved.size, unread: unread.length })
     pump()
   }
 
@@ -304,7 +350,11 @@ export function createLibrary(config: Config, db: Db, places: Places) {
 
   function forget(id: string) {
     forgotten.add(id)
-    for (let i = queue.length - 1; i >= 0; i--) if (queue[i].id === id) queue.splice(i, 1)
+    for (let i = queue.length - 1; i >= 0; i--)
+      if (queue[i].id === id) {
+        queued.delete(`${queue[i].userId}/${queue[i].found.path}`)
+        queue.splice(i, 1)
+      }
   }
 
   // A delete that failed: its photo may render again.
