@@ -35,14 +35,21 @@ struct LibraryView: View {
     @State private var gallery = Gallery()
     @State private var picked: [PhotosPickerItem] = []
     @State private var scrolledTo: Photo?
-    @State private var showingAlbums = false
+    @State private var path: [Route] = []
     @State private var selection: Set<String>?
 
+    // One path with every destination at the root: mixing isPresented and
+    // value links on one stack pushed the album list again for each album.
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             grid
                 .toolbar(.hidden, for: .navigationBar)
-                .navigationDestination(isPresented: $showingAlbums) { AlbumsView() }
+                .navigationDestination(for: Route.self) { route in
+                    switch route {
+                    case .albums: AlbumsView()
+                    case let .album(album): AlbumView(album: album)
+                    }
+                }
         }
     }
 
@@ -97,7 +104,7 @@ struct LibraryView: View {
     // Albums and the upload status on the left, the upload button on the right.
     private var footer: some View {
         HStack(alignment: .bottom) {
-            Button { showingAlbums = true } label: {
+            Button { path = [.albums] } label: {
                 Image(systemName: "rectangle.stack").font(.title2.weight(.medium)).frame(width: 56, height: 56)
             }
             .glassEffect(.regular.interactive(), in: .circle)
@@ -120,6 +127,11 @@ struct LibraryView: View {
         .padding(.horizontal, 20)
         .padding(.bottom, 4)
     }
+}
+
+enum Route: Hashable {
+    case albums
+    case album(Album)
 }
 
 struct QueueView: View {

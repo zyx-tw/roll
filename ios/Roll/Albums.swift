@@ -37,6 +37,7 @@ struct AlbumsView: View {
     @State private var albums: [Album]?
     @State private var naming: Naming?
     @State private var deleting: Album?
+    @State private var failure: String?
 
     private let columns = [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)]
 
@@ -48,7 +49,7 @@ struct AlbumsView: View {
                 } else {
                     LazyVGrid(columns: columns, spacing: 20) {
                         ForEach(albums ?? []) { album in
-                            NavigationLink(value: album) { AlbumCell(album: album) }
+                            NavigationLink(value: Route.album(album)) { AlbumCell(album: album) }
                                 .buttonStyle(.plain)
                                 .contextMenu {
                                     Button("重新命名", systemImage: "pencil") { naming = Naming(album: album, text: album.name) }
@@ -60,9 +61,6 @@ struct AlbumsView: View {
                 }
             }
             .navigationTitle("相簿")
-            .navigationDestination(for: Album.self) { album in
-                AlbumView(album: album) { Task { await load() } }
-            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("新增相簿", systemImage: "plus") { naming = Naming(album: nil, text: "") }
@@ -71,14 +69,19 @@ struct AlbumsView: View {
             .task { await load() }
             .refreshable { await load() }
             .nameAlert($naming) { naming, text in
-                if let album = naming.album {
-                    try? await Client.shared.renameAlbum(album.id, to: text)
-                } else {
-                    _ = try? await Client.shared.createAlbum(text)
+                do {
+                    if let album = naming.album {
+                        try await Client.shared.renameAlbum(album.id, to: text)
+                    } else {
+                        _ = try await Client.shared.createAlbum(text)
+                    }
+                } catch {
+                    failure = albumFailure(error)
                 }
                 await load()
             }
-            .deleteAlbumDialog($deleting) { await load() }
+            .deleteAlbumDialog($deleting, failure: $failure) { await load() }
+            .failureAlert($failure)
     }
 
     private func load() async {
@@ -110,16 +113,15 @@ struct AlbumCell: View {
 // One album's photos, the same grid and viewer as the library.
 struct AlbumView: View {
     @State var album: Album
-    var onChange: () -> Void = {}
     @State private var gallery: Gallery
     @State private var naming: Naming?
     @State private var deleting: Album?
     @State private var selection: Set<String>?
+    @State private var failure: String?
     @Environment(\.dismiss) private var dismiss
 
-    init(album: Album, onChange: @escaping () -> Void = {}) {
+    init(album: Album) {
         _album = State(initialValue: album)
-        self.onChange = onChange
         _gallery = State(initialValue: Gallery(album: album.id))
     }
 
@@ -136,7 +138,6 @@ struct AlbumView: View {
             .navigationBarBackButtonHidden(selection != nil)
             .task { await gallery.reload() }
             .refreshable { await gallery.reload() }
-            .onDisappear { onChange() }
             .toolbar {
                 if selection == nil {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -157,9 +158,15 @@ struct AlbumView: View {
                 }
             }
             .nameAlert($naming) { _, text in
-                if (try? await Client.shared.renameAlbum(album.id, to: text)) != nil { album.name = text }
+                do {
+                    try await Client.shared.renameAlbum(album.id, to: text)
+                    album.name = text
+                } catch {
+                    failure = albumFailure(error)
+                }
             }
-            .deleteAlbumDialog($deleting) { dismiss() }
+            .deleteAlbumDialog($deleting, failure: $failure) { dismiss() }
+            .failureAlert($failure)
     }
 }
 
@@ -169,6 +176,7 @@ struct AlbumPicker: View {
     var onAdded: () -> Void = {}
     @State private var albums: [Album]?
     @State private var naming: Naming?
+    @State private var failure: String?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -199,15 +207,23 @@ struct AlbumPicker: View {
             }
             .task { albums = try? await Client.shared.albums() }
             .nameAlert($naming) { _, text in
-                if let album = try? await Client.shared.createAlbum(text) { await add(to: album.id) }
+                do {
+                    await add(to: try await Client.shared.createAlbum(text).id)
+                } catch {
+                    failure = albumFailure(error)
+                }
             }
+            .failureAlert($failure)
         }
     }
 
     private func add(to id: String) async {
-        if (try? await Client.shared.changeAlbum(id, add: photoIds)) != nil {
+        do {
+            try await Client.shared.changeAlbum(id, add: photoIds)
             onAdded()
             dismiss()
+        } catch {
+            failure = albumFailure(error)
         }
     }
 }
@@ -235,15 +251,32 @@ extension View {
     }
 
     // Deleting an album keeps its photos.
-    func deleteAlbumDialog(_ album: Binding<Album?>, done: @escaping () async -> Void) -> some View {
+    func deleteAlbumDialog(_ album: Binding<Album?>, failure: Binding<String?>, done: @escaping () async -> Void) -> some View {
         confirmationDialog("刪除「\(album.wrappedValue?.name ?? "")」？", isPresented: Binding(get: { album.wrappedValue != nil }, set: { if !$0 { album.wrappedValue = nil } }), titleVisibility: .visible, presenting: album.wrappedValue) { target in
             Button("刪除相簿", role: .destructive) {
                 Task {
-                    if (try? await Client.shared.deleteAlbum(target.id)) != nil { await done() }
+                    do {
+                        try await Client.shared.deleteAlbum(target.id)
+                        await done()
+                    } catch {
+                        failure.wrappedValue = albumFailure(error)
+                    }
                 }
             }
         } message: { _ in
             Text("照片會留在圖庫。")
         }
     }
+
+    // Says why an album change did not go through.
+    func failureAlert(_ failure: Binding<String?>) -> some View {
+        alert(failure.wrappedValue ?? "", isPresented: Binding(get: { failure.wrappedValue != nil }, set: { if !$0 { failure.wrappedValue = nil } })) {
+            Button("好", role: .cancel) {}
+        }
+    }
+}
+
+// 409 is the one the user can fix: the name is in use.
+func albumFailure(_ error: Error) -> String {
+    (error as? APIError)?.status == 409 ? "已經有同名的相簿" : "沒有成功，請再試一次"
 }
