@@ -19,8 +19,13 @@ const FRAMES = [0.15, 0.5, 0.85]
 // A photo whose meaning is this many standard deviations above the mean of
 // the photos searched counts as a match (as on gallery).
 const SPREAD = 1.5
-// Even a narrow search shows its best few.
+// Even a narrow search shows its best few...
 const AT_LEAST = 3
+// ...but nothing below this cosine: a query for something the library does
+// not hold must find nothing. Measured on 323 photos (EmbeddingGemma 2): the
+// best photo for something present scored 0.69 to 0.74 (拉麵, 夜景, 鳥居,
+// 飛機), for something absent 0.63 to 0.66 (貓, 雪, 婚禮, 游泳池).
+export const FLOOR = 0.67
 
 // For matching typed text against text in photos: one form for both.
 export const textKey = (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, "")
@@ -182,7 +187,7 @@ export function createSmart(config: Config, db: Db, library: ReturnType<typeof c
       const sd = Math.sqrt(scored.reduce((sum, s) => sum + (s.score - mean) ** 2, 0) / scored.length)
       const sorted = scored.filter(s => !textIds.has(s.id)).sort((a, b) => b.score - a.score)
       sorted.forEach((s, i) => {
-        if (s.score >= mean + SPREAD * sd || i < AT_LEAST) meaning.push(s.id)
+        if (s.score >= FLOOR && (s.score >= mean + SPREAD * sd || i < AT_LEAST)) meaning.push(s.id)
       })
     }
     const textOrder = [...textIds].sort((a, b) => (score.get(b) ?? -1) - (score.get(a) ?? -1))
