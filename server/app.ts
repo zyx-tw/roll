@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs"
 import { lstat } from "node:fs/promises"
 import { join } from "node:path"
+import { createAlbums } from "./albums"
 import { createAuth } from "./auth"
 import { createEmbed } from "./embed"
 import { createFaces } from "./faces"
@@ -30,6 +31,7 @@ export function createApp(config: Config) {
   const faces = createFaces(config, db, library, embed)
   const photos = createPhotos(config, db, library, places, playback, smart, faces)
   const upload = createUpload(config, library)
+  const albums = createAlbums(db, places)
   const host = new URL(config.origin).host
 
   // The SPA and its hashed assets.
@@ -70,6 +72,7 @@ export function createApp(config: Config) {
       const isUpload = url.pathname === "/api/upload" || url.pathname.startsWith("/api/upload/")
       if (user.scope === "upload" && !isUpload) throw new HttpError(403)
       if (url.pathname.startsWith("/api/photos")) return photos.handle(req, url, user)
+      if (url.pathname === "/api/albums" || url.pathname.startsWith("/api/albums/")) return albums.handle(req, url, user)
       if (url.pathname.startsWith("/api/people") || url.pathname.startsWith("/api/faces/")) return faces.handle(req, url, user)
       if (isUpload) return upload.handle(req, url, user)
       throw new HttpError(404)

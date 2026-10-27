@@ -19,6 +19,8 @@ You copy the originals from a phone to the server. roll reads them, makes small 
 - **Search in one box**: dates (`4/15`, `2026 年 4 月`), towns (`京都`, `Kyoto`), countries (`日本`) and kinds (`自拍`, `截圖`, `影片`, `原況`, `全景`), combined.
 - **Search by meaning**: other words find photos and video frames that show them (`海邊`, `京都拉麵`), and text inside photos comes first (screenshots, menus, tickets).
 - **Name people**: faces of one person gather into a group; name it once and every photo of them answers to that name (`媽媽`, `媽媽 京都`).
+- **Title and describe**: give a photo a title and a description; search finds them first.
+- **Albums**: put photos in named albums; deleting an album keeps its photos.
 - **Upload**: the app sends originals from Photos; they keep every byte.
 - **Delete**: a photo moves to `<user>/.trash/<day>/`, out of the timeline.
 - **Keep iPhone formats**: HEIC photos, HEVC videos and Live Photos play as they are.

@@ -4,15 +4,21 @@ import SwiftUI
 // Newest first from the server; shown oldest at the top, newest at the bottom.
 @Observable
 final class Gallery {
+    // Only this album's photos, when set.
+    let album: String?
     var photos: [Photo] = []
     var total: Int?
     var query = ""
     private var next: String?
     private var loading = false
 
+    init(album: String? = nil) {
+        self.album = album
+    }
+
     // Replaces the list only once the first page is in, so a refresh never blanks the grid.
     func reload() async {
-        guard let page = try? await Client.shared.photos(after: nil, query: query) else { return }
+        guard let page = try? await Client.shared.photos(after: nil, query: query, album: album) else { return }
         photos = page.items
         next = page.next
         total = page.total
@@ -22,7 +28,7 @@ final class Gallery {
         guard !loading, let cursor = next else { return }
         loading = true
         defer { loading = false }
-        guard let page = try? await Client.shared.photos(after: cursor, query: query) else { return }
+        guard let page = try? await Client.shared.photos(after: cursor, query: query, album: album) else { return }
         photos.append(contentsOf: page.items)
         next = page.next
     }
@@ -143,6 +149,7 @@ struct Viewer: View {
     @State private var confirming = false
     @State private var info: Photo?
     @State private var sharing: SharedFile?
+    @State private var picking: Photo?
     @State private var preparing = false
     @Environment(\.dismiss) private var dismiss
 
@@ -202,6 +209,7 @@ struct Viewer: View {
         .sheet(item: $sharing, onDismiss: { sharing.map { try? FileManager.default.removeItem(at: $0.url.deletingLastPathComponent()) } }) {
             ShareSheet(url: $0.url).ignoresSafeArea()
         }
+        .sheet(item: $picking) { AlbumPicker(photoId: $0.id) }
         .confirmationDialog("刪除這個項目？", isPresented: $confirming, titleVisibility: .visible) {
             Button("刪除", role: .destructive) { Task { await delete() } }
         }
@@ -227,9 +235,15 @@ struct Viewer: View {
             }
             .glassEffect(.regular.interactive(), in: .capsule)
             Spacer(minLength: 0)
-            // Albums come later.
             Menu {
-                Button("加入相簿", systemImage: "rectangle.stack.badge.plus") {}.disabled(true)
+                Button("加入相簿", systemImage: "rectangle.stack.badge.plus") { picking = photo }
+                if let album = gallery.album {
+                    Button("從這個相簿移除", systemImage: "rectangle.stack.badge.minus", role: .destructive) {
+                        Task {
+                            if (try? await Client.shared.changeAlbum(album, remove: [photo.id])) != nil { drop(photo) }
+                        }
+                    }
+                }
             } label: {
                 Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 52, height: 52)
             }
@@ -292,8 +306,12 @@ struct Viewer: View {
         } catch {
             return
         }
-        let list = photos
-        let index = list.firstIndex(of: photo) ?? 0
+        drop(photo)
+    }
+
+    // Takes the item off this list and shows the next one.
+    private func drop(_ photo: Photo) {
+        let index = photos.firstIndex { $0.id == photo.id } ?? 0
         gallery.remove(photo)
         let rest = photos
         if rest.isEmpty { return dismiss() }
