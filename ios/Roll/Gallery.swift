@@ -11,6 +11,8 @@ final class Gallery {
     var query = ""
     private var next: String?
     private var loading = false
+    // Bumped by each reload, so a page asked for before it is dropped.
+    private var generation = 0
 
     init(album: String? = nil) {
         self.album = album
@@ -18,7 +20,9 @@ final class Gallery {
 
     // Replaces the list only once the first page is in, so a refresh never blanks the grid.
     func reload() async {
-        guard let page = try? await Client.shared.photos(after: nil, query: query, album: album) else { return }
+        generation += 1
+        let mine = generation
+        guard let page = try? await Client.shared.photos(after: nil, query: query, album: album), mine == generation else { return }
         photos = page.items
         next = page.next
         total = page.total
@@ -28,8 +32,10 @@ final class Gallery {
         guard !loading, let cursor = next else { return }
         loading = true
         defer { loading = false }
-        guard let page = try? await Client.shared.photos(after: cursor, query: query, album: album) else { return }
-        photos.append(contentsOf: page.items)
+        let mine = generation
+        guard let page = try? await Client.shared.photos(after: cursor, query: query, album: album), mine == generation else { return }
+        let have = Set(photos.map(\.id))
+        photos.append(contentsOf: page.items.filter { !have.contains($0.id) })
         next = page.next
     }
 

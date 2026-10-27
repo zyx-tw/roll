@@ -76,11 +76,11 @@ actor Client {
         }
     }
 
-    func me() async -> String? {
-        guard let data = try? await send("/api/auth/me"),
-              let user = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["user"] as? [String: Any]
-        else { return nil }
-        return user["name"] as? String
+    // The signed-in name; nil when the server says nobody is signed in.
+    func me() async throws -> String? {
+        let data = try await send("/api/auth/me")
+        let user = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["user"] as? [String: Any]
+        return user?["name"] as? String
     }
 
     func logout() async {

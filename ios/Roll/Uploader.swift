@@ -37,6 +37,10 @@ final class Uploader {
             return
         }
         let assets = Library.assets(identifiers)
+        // Picking a failed item again tries it again.
+        for index in items.indices where identifiers.contains(items[index].id) {
+            if case .failed = items[index].status, assets[items[index].id] != nil { items[index].status = .waiting }
+        }
         let known = Set(items.map(\.id))
         for id in identifiers where !known.contains(id) {
             var item = Item(id: id)
@@ -58,6 +62,10 @@ final class Uploader {
         if case let .uploading(f)? = current?.status { text += " \(Int(f * 100))%" }
         if case let .fetching(f)? = current?.status { text = "從 iCloud 下載 \(Int(f * 100))%" }
         return text
+    }
+
+    var failedCount: Int {
+        items.filter { if case .failed = $0.status { true } else { false } }.count
     }
 
     func retry() async {
