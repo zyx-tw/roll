@@ -36,18 +36,28 @@ struct LibraryView: View {
     @State private var picked: [PhotosPickerItem] = []
     @State private var scrolledTo: Photo?
     @State private var showingAlbums = false
+    @State private var selection: Set<String>?
 
     var body: some View {
-        PhotoGrid(gallery: gallery, topInset: 120, bottomInset: 96) { photo in
-            if photo?.id != scrolledTo?.id { scrolledTo = photo }
+        NavigationStack {
+            grid
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(isPresented: $showingAlbums) { AlbumsView() }
         }
+    }
+
+    private var grid: some View {
+        PhotoGrid(gallery: gallery, topInset: 120, bottomInset: 96, onScrolledUp: { photo in
+            if photo?.id != scrolledTo?.id { scrolledTo = photo }
+        }, selection: $selection)
             .ignoresSafeArea(edges: [.top, .bottom])
             .refreshable { await gallery.reload() }
             .task { await gallery.reload() }
             .onChange(of: uploader.finished) { Task { await gallery.waitForPreviews() } }
             .overlay(alignment: .top) { header }
-            .overlay(alignment: .bottom) { footer }
-            .fullScreenCover(isPresented: $showingAlbums) { AlbumsView() }
+            .overlay(alignment: .bottom) {
+                if selection != nil { SelectionBar(gallery: gallery, selection: $selection) } else { footer }
+            }
             .onChange(of: picked) {
                 let ids = picked.compactMap(\.itemIdentifier)
                 picked = []
@@ -67,6 +77,11 @@ struct LibraryView: View {
             }
             .animation(.easeInOut(duration: 0.2), value: scrolledTo?.id)
             Spacer()
+            Button(selection == nil ? "選擇" : "取消") { selection = selection == nil ? [] : nil }
+                .font(.body.weight(.semibold))
+                .padding(.horizontal, 18)
+                .frame(height: 44)
+                .glassEffect(.regular.interactive(), in: .capsule)
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 20)
