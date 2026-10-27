@@ -667,6 +667,19 @@ describe("a scan keeps what the user made", () => {
     expect((await body(req(`/api/photos?album=${album.id}`, { as: "max" }))).items.map((p: { id: string }) => p.id)).toEqual([before.id])
   })
 
+  test("a new file with the same size and time but another capture time is not a move", async () => {
+    await photo(join(lib(), "swap/old.jpg"), "2025:03:01 10:00:00")
+    await rescan()
+    const before = row("swap/old.jpg")!
+    const { mtime, size } = statSync(join(lib(), "swap/old.jpg"))
+    await photo(join(lib(), "swap/new.jpg"), "2025:04:01 10:00:00")
+    expect(statSync(join(lib(), "swap/new.jpg")).size).toBe(size)
+    utimesSync(join(lib(), "swap/new.jpg"), mtime, mtime)
+    rmSync(join(lib(), "swap/old.jpg"))
+    await rescan()
+    expect(row("swap/new.jpg")?.id).not.toBe(before.id)
+  })
+
   test("a folder that fails to read is not taken for deleted", async () => {
     if (process.getuid?.() === 0) return // root reads any folder
     const before = row("sorted/beach.jpg")!

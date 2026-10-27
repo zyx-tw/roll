@@ -255,21 +255,24 @@ export function createLibrary(config: Config, db: Db, places: Places) {
     const unread: string[] = []
     const found = await walk(root, unread)
     const known = new Map(
-      (db.query("select id, path, size, mtime, kind, live_path, version, status from photos where user_id = ?").all(userId) as Pick<Photo, "id" | "path" | "size" | "mtime" | "kind" | "live_path" | "version" | "status">[]).map(p => [p.path, p]),
+      (db.query("select id, path, size, mtime, kind, taken_at, live_path, version, status from photos where user_id = ?").all(userId) as Pick<Photo, "id" | "path" | "size" | "mtime" | "kind" | "taken_at" | "live_path" | "version" | "status">[]).map(p => [p.path, p]),
     )
     const seen = new Set(found.map(f => f.path))
     // A path that failed to read, or sits under a folder that did, is not gone.
-    const missed = (path: string) => unread.some(u => (u.endsWith("/") ? path.startsWith(u) : path === u))
+    // Nor is one with a job still queued or rendering: the next scan decides it.
+    const missed = (path: string) => queued.has(`${userId}/${path}`) || unread.some(u => (u.endsWith("/") ? path.startsWith(u) : path === u))
     let gone = [...known.values()].filter(p => !seen.has(p.path) && !missed(p.path))
     // A moved or renamed file keeps its row, and with it the title, albums and
-    // faces: one gone row and one new file with the same size, time and kind.
+    // faces: one gone row and one new file with the same size, time and kind,
+    // and the same capture time inside the file.
     const sameFile = (p: { size: number; mtime: number; kind: string }) => `${p.size}:${p.mtime}:${p.kind}`
     const goneBy = Map.groupBy(gone, sameFile)
-    const fresh = Map.groupBy(found.filter(f => !known.has(f.path)), sameFile)
+    const fresh = [...Map.groupBy(found.filter(f => !known.has(f.path)), sameFile)].filter(([key, files]) => files.length === 1 && goneBy.get(key)?.length === 1)
+    const freshTags = fresh.length ? await exiftool(fresh.map(([, files]) => join(root, files[0].path))) : new Map()
     const moved = new Set<string>()
     for (const [key, files] of fresh) {
-      const rows = goneBy.get(key)
-      if (files.length !== 1 || rows?.length !== 1 || queued.has(`${userId}/${rows[0].path}`)) continue
+      const rows = goneBy.get(key)!
+      if ((readMeta(freshTags.get(join(root, files[0].path)) ?? {}).takenAt ?? files[0].mtime) !== rows[0].taken_at) continue
       db.query("update photos set path = ?, live_path = ? where id = ? and user_id = ?").run(files[0].path, files[0].live, rows[0].id, userId)
       known.delete(rows[0].path)
       known.set(files[0].path, { ...rows[0], path: files[0].path, live_path: files[0].live })

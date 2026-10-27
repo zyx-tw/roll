@@ -130,8 +130,10 @@ export function createFaces(config: Config, db: Db, library: ReturnType<typeof c
       const now = db.query("select version from photos where id = ? and user_id = ?").get(photo.id, photo.user_id) as { version: number } | null
       if (!now || now.version !== photo.version) return
       // What the user decided on the old faces carries over to the new face in the same place.
-      const decided = (db.query("select box, person_id from faces where photo_id = ? and user_id = ? and labeled_by = 'user'").all(photo.id, photo.user_id) as { box: string; person_id: number | null }[]).map(f => ({
+      // The same place alone is not enough: the photo may have been replaced, so the face must also look the same.
+      const decided = (db.query("select box, vector, person_id from faces where photo_id = ? and user_id = ? and labeled_by = 'user'").all(photo.id, photo.user_id) as { box: string; vector: Uint8Array; person_id: number | null }[]).map(f => ({
         box: JSON.parse(f.box) as number[],
+        vector: toVector(f.vector),
         person: f.person_id,
       }))
       db.query("delete from faces where photo_id = ? and user_id = ?").run(photo.id, photo.user_id)
@@ -139,7 +141,7 @@ export function createFaces(config: Config, db: Db, library: ReturnType<typeof c
       for (const face of found) {
         const vector = Float32Array.from(face.vector)
         const box = face.box.map(n => Math.round(n))
-        const same = decided.find(d => overlap(d.box, box) >= SAME_FACE)
+        const same = decided.find(d => overlap(d.box, box) >= SAME_FACE && dot(d.vector, vector) >= MATCH)
         insert.run(newId(), photo.id, photo.user_id, JSON.stringify(box), face.score, new Uint8Array(vector.buffer), same?.person ?? null, same ? "user" : null, Date.now())
       }
       db.query("insert into face_scans (photo_id, version, model) values (?, ?, ?) on conflict(photo_id) do update set version = excluded.version, model = excluded.model").run(photo.id, photo.version, FACE_MODEL)
