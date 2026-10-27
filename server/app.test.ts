@@ -550,3 +550,47 @@ test("a ward reads as its city, and the city's name reaches the ward", () => {
   expect(35.03).toBeLessThan(area.maxLat)
   expect(places.areas("京都")[0].maxLat - 35.02107).toBeGreaterThan(0.15)
 })
+
+describe("titles and descriptions", () => {
+  const find = async (q: string, as = "ann") => (await body(req(`/api/photos?q=${encodeURIComponent(q)}`, { as }))).items.map((p: { id: string }) => p.id)
+  const patch = (id: string, value: unknown, as = "ann") => req(`/api/photos/${id}`, { method: "PATCH", body: JSON.stringify(value), as })
+  const path = () => join(dir, "data/library/ann/notes/titled.jpg")
+  let id: string
+
+  test("a scan takes the file's own title and description", async () => {
+    await photo(path(), "2024:03:01 10:00:00")
+    await Bun.spawn(["exiftool", "-q", "-overwrite_original", "-XMP-dc:Title=日落", "-XMP-dc:Description=和 媽媽 在海邊", path()]).exited
+    await app.library.scan()
+    await app.library.drained()
+    const found = await find("日落")
+    expect(found).toHaveLength(1)
+    id = found[0]
+    expect(await body(req(`/api/photos/${id}`, { as: "ann" }))).toMatchObject({ title: "日落", description: "和 媽媽 在海邊" })
+    // Spaces do not matter; every word must match.
+    expect(await find("媽媽在海邊")).toEqual([id])
+    expect(await find("日落 海邊")).toEqual([id])
+    expect(await find("日落 雪")).toEqual([])
+  })
+
+  test("the user's edit wins over the file, also after a rescan", async () => {
+    expect(await body(patch(id, { title: "  生日  " }))).toEqual({ title: "生日", description: "和 媽媽 在海邊" })
+    expect(await find("生日")).toEqual([id])
+    expect(await find("日落")).toEqual([])
+    const later = new Date(Date.now() + 5000)
+    utimesSync(path(), later, later)
+    await app.library.scan()
+    await app.library.drained()
+    expect(await body(req(`/api/photos/${id}`, { as: "ann" }))).toMatchObject({ title: "生日" })
+    expect((await body(patch(id, { description: "" }))).description).toBe("")
+    expect(await find("海邊")).toEqual([])
+  })
+
+  test("only the owner edits, and only with plain short text", async () => {
+    expect((await patch(id, { title: "x" }, "bob")).status).toBe(404)
+    expect(await find("生日", "bob")).toEqual([])
+    expect((await patch(id, { title: 1 })).status).toBe(400)
+    expect((await patch(id, { title: "x".repeat(201) })).status).toBe(400)
+    expect((await req(`/api/photos/${id}`, { method: "PATCH", body: "{}", as: "ann", headers: { origin: "http://evil.test" } })).status).toBe(403)
+    expect((await req(`/api/photos/${id}`, { method: "PATCH", body: "{}" })).status).toBe(401)
+  })
+})
