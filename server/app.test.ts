@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { cpSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
+import { chmodSync, cpSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createApp } from "./app"
@@ -10,6 +10,7 @@ import { exifTime, readMeta } from "./library"
 import { parseDateQuery } from "./search"
 import { loadPlaces } from "./places"
 import { searchClause } from "./photos"
+import { overlap } from "./faces"
 
 const ROLL = "http://roll.test"
 let dir: string
@@ -636,4 +637,75 @@ describe("albums", () => {
     expect((await send("POST", `/api/albums/${id}/photos`, { add: ["../../etc"] })).status).toBe(400)
     expect((await req("/api/albums")).status).toBe(401)
   })
+})
+
+describe("a scan keeps what the user made", () => {
+  const lib = () => join(dir, "data/library/max")
+  const row = (path: string) => app.db.query("select id, status, version from photos where user_id = 'max' and path = ?").get(path) as { id: string; status: string; version: number } | null
+  const rescan = async () => {
+    await app.library.scan()
+    await app.library.drained()
+  }
+
+  beforeAll(async () => {
+    signIn("max")
+    await photo(join(lib(), "trip/a.jpg"), "2025:02:01 10:00:00")
+    await photo(join(lib(), "trip/b.jpg"), "2025:02:02 10:00:00", 200, 300)
+    await rescan()
+  })
+
+  test("a moved file keeps its id, title and albums", async () => {
+    const before = row("trip/a.jpg")!
+    await req(`/api/photos/${before.id}`, { method: "PATCH", body: JSON.stringify({ title: "海邊" }), as: "max" })
+    const album = await body(post("/api/albums", { name: "旅行" }, "max"))
+    await post(`/api/albums/${album.id}/photos`, { add: [before.id] }, "max")
+    mkdirSync(join(lib(), "sorted"), { recursive: true })
+    renameSync(join(lib(), "trip/a.jpg"), join(lib(), "sorted/beach.jpg"))
+    await rescan()
+    expect(row("sorted/beach.jpg")).toMatchObject({ id: before.id, version: before.version })
+    expect(await body(req(`/api/photos/${before.id}`, { as: "max" }))).toMatchObject({ title: "海邊" })
+    expect((await body(req(`/api/photos?album=${album.id}`, { as: "max" }))).items.map((p: { id: string }) => p.id)).toEqual([before.id])
+  })
+
+  test("a folder that fails to read is not taken for deleted", async () => {
+    if (process.getuid?.() === 0) return // root reads any folder
+    const before = row("sorted/beach.jpg")!
+    chmodSync(join(lib(), "sorted"), 0o000)
+    try {
+      await rescan()
+      expect(row("sorted/beach.jpg")?.id).toBe(before.id)
+    } finally {
+      chmodSync(join(lib(), "sorted"), 0o755)
+    }
+  })
+
+  test("a file queued by one scan is not queued again by the next", async () => {
+    await photo(join(lib(), "trip/c.jpg"), "2025:02:03 10:00:00")
+    await app.library.scan()
+    await app.library.scan()
+    expect(app.library.pending("max").files).toBeLessThanOrEqual(1)
+    await app.library.drained()
+    expect(app.db.query("select count(*) as n from photos where user_id = 'max' and path = 'trip/c.jpg'").get()).toEqual({ n: 1 })
+  })
+
+  test("a failed render is tried again on the next scan", async () => {
+    const path = join(lib(), "trip/b.jpg")
+    const good = readFileSync(path)
+    const mtime = new Date(statSync(path).mtimeMs + 10_000)
+    writeFileSync(path, new Uint8Array(good.byteLength))
+    utimesSync(path, mtime, mtime)
+    await rescan()
+    expect(row("trip/b.jpg")?.status).toBe("failed")
+    // Same size and time as the broken copy: only the failed status can bring it back.
+    writeFileSync(path, good)
+    utimesSync(path, mtime, mtime)
+    await rescan()
+    expect(row("trip/b.jpg")?.status).toBe("ready")
+  })
+})
+
+test("a face found again in the same place overlaps its old box", () => {
+  expect(overlap([0, 0, 100, 100], [0, 0, 100, 100])).toBe(1)
+  expect(overlap([0, 0, 100, 100], [10, 10, 110, 110])).toBeGreaterThan(0.5)
+  expect(overlap([0, 0, 100, 100], [200, 200, 300, 300])).toBe(0)
 })
