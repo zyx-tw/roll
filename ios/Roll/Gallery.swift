@@ -61,6 +61,8 @@ struct PhotoGrid: View {
     var bottomInset: CGFloat = 0
     // The top-most visible item while scrolled up from the bottom; nil at the bottom.
     var onScrolledUp: (Photo?) -> Void = { _ in }
+    // The picked ids while choosing items; nil when tapping opens the viewer.
+    var selection: Binding<Set<String>?> = .constant(nil)
     @State private var open: Photo?
     @State private var visible: [String] = []
     @State private var atBottom = true
@@ -82,7 +84,14 @@ struct PhotoGrid: View {
                 ForEach(0..<pad, id: \.self) { _ in Color.clear.aspectRatio(1, contentMode: .fit) }
                 ForEach(shown) { photo in
                     Thumb(photo: photo)
-                        .onTapGesture { open = photo }
+                        .overlay(alignment: .bottomTrailing) {
+                            if let picked = selection.wrappedValue { Check(on: picked.contains(photo.id)) }
+                        }
+                        .onTapGesture {
+                            guard var picked = selection.wrappedValue else { return open = photo }
+                            if picked.remove(photo.id) == nil { picked.insert(photo.id) }
+                            selection.wrappedValue = picked
+                        }
                         .onAppear { if photo == shown.first { Task { await gallery.more() } } }
                 }
             }
@@ -107,6 +116,102 @@ struct PhotoGrid: View {
                 .presentationBackground(.clear)
         }
     }
+}
+
+// The tick on a picked thumbnail, as in Photos.
+struct Check: View {
+    let on: Bool
+
+    var body: some View {
+        ZStack {
+            if on {
+                Color.white.opacity(0.25)
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title3)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, .blue)
+                    .padding(6)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+// The bar while choosing: add to an album, remove from this album, delete.
+struct SelectionBar: View {
+    let gallery: Gallery
+    @Binding var selection: Set<String>?
+    @State private var picking: PickedIds?
+    @State private var confirming = false
+    @State private var working = false
+
+    private var ids: [String] { gallery.photos.map(\.id).filter { selection?.contains($0) ?? false } }
+
+    var body: some View {
+        let count = ids.count
+        HStack(spacing: 12) {
+            Button { picking = PickedIds(ids: ids) } label: {
+                Image(systemName: "rectangle.stack.badge.plus").font(.title3).frame(width: 52, height: 52)
+            }
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel("加入相簿")
+            Spacer(minLength: 0)
+            Group {
+                if working { ProgressView() } else { Text(count == 0 ? "選擇項目" : "已選取 \(count) 項").monospacedDigit() }
+            }
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 20)
+            .frame(height: 52)
+            .glassEffect(.regular, in: .capsule)
+            Spacer(minLength: 0)
+            if let album = gallery.album {
+                Button { Task { await removeFromAlbum(album) } } label: {
+                    Image(systemName: "rectangle.stack.badge.minus").font(.title3).frame(width: 52, height: 52)
+                }
+                .glassEffect(.regular.interactive(), in: .circle)
+                .accessibilityLabel("從這個相簿移除")
+            }
+            Button { confirming = true } label: {
+                Image(systemName: "trash").font(.title3).frame(width: 52, height: 52)
+            }
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel("刪除")
+        }
+        .disabled(count == 0 || working)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 4)
+        .sheet(item: $picking) { picked in
+            AlbumPicker(photoIds: picked.ids) { selection = nil }
+        }
+        .confirmationDialog("刪除 \(count) 個項目？", isPresented: $confirming, titleVisibility: .visible) {
+            Button("刪除", role: .destructive) { Task { await delete() } }
+        }
+    }
+
+    private func removeFromAlbum(_ album: String) async {
+        let picked = ids
+        working = true
+        defer { working = false }
+        guard (try? await Client.shared.changeAlbum(album, remove: picked)) != nil else { return }
+        for photo in gallery.photos where picked.contains(photo.id) { gallery.remove(photo) }
+        selection = nil
+    }
+
+    // One at a time: each moves to the trash on the server.
+    private func delete() async {
+        working = true
+        defer { working = false }
+        for photo in gallery.photos where ids.contains(photo.id) {
+            if (try? await Client.shared.send("/api/photos/\(photo.id)", method: "DELETE")) != nil { gallery.remove(photo) }
+        }
+        selection = nil
+    }
+}
+
+struct PickedIds: Identifiable {
+    let ids: [String]
+    var id: String { ids.joined(separator: ",") }
 }
 
 struct Thumb: View {
@@ -209,7 +314,7 @@ struct Viewer: View {
         .sheet(item: $sharing, onDismiss: { sharing.map { try? FileManager.default.removeItem(at: $0.url.deletingLastPathComponent()) } }) {
             ShareSheet(url: $0.url).ignoresSafeArea()
         }
-        .sheet(item: $picking) { AlbumPicker(photoId: $0.id) }
+        .sheet(item: $picking) { AlbumPicker(photoIds: [$0.id]) }
         .confirmationDialog("刪除這個項目？", isPresented: $confirming, titleVisibility: .visible) {
             Button("刪除", role: .destructive) { Task { await delete() } }
         }

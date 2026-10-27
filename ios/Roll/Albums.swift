@@ -31,17 +31,16 @@ extension Client {
 }
 
 // Every album as a grid of covers, newest first, as in Photos. + makes one;
-// hold an album to rename or delete it.
+// hold an album to rename or delete it. Pushed from the library, so the edge
+// swipe goes back.
 struct AlbumsView: View {
     @State private var albums: [Album]?
     @State private var naming: Naming?
     @State private var deleting: Album?
-    @Environment(\.dismiss) private var dismiss
 
     private let columns = [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)]
 
     var body: some View {
-        NavigationStack {
             ScrollView {
                 if let albums, albums.isEmpty {
                     ContentUnavailableView("沒有相簿", systemImage: "rectangle.stack")
@@ -65,9 +64,6 @@ struct AlbumsView: View {
                 AlbumView(album: album) { Task { await load() } }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("關閉", systemImage: "xmark") { dismiss() }
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("新增相簿", systemImage: "plus") { naming = Naming(album: nil, text: "") }
                 }
@@ -83,7 +79,6 @@ struct AlbumsView: View {
                 await load()
             }
             .deleteAlbumDialog($deleting) { await load() }
-        }
     }
 
     private func load() async {
@@ -119,6 +114,7 @@ struct AlbumView: View {
     @State private var gallery: Gallery
     @State private var naming: Naming?
     @State private var deleting: Album?
+    @State private var selection: Set<String>?
     @Environment(\.dismiss) private var dismiss
 
     init(album: Album, onChange: @escaping () -> Void = {}) {
@@ -128,22 +124,35 @@ struct AlbumView: View {
     }
 
     var body: some View {
-        PhotoGrid(gallery: gallery)
+        PhotoGrid(gallery: gallery, bottomInset: selection == nil ? 0 : 72, selection: $selection)
+            .overlay(alignment: .bottom) {
+                if selection != nil { SelectionBar(gallery: gallery, selection: $selection) }
+            }
             .overlay {
                 if gallery.total == 0 { ContentUnavailableView("沒有照片", systemImage: "photo", description: Text("在照片的「…」選單加入這個相簿")) }
             }
             .navigationTitle(album.name)
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(selection != nil)
             .task { await gallery.reload() }
             .refreshable { await gallery.reload() }
             .onDisappear { onChange() }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("重新命名", systemImage: "pencil") { naming = Naming(album: album, text: album.name) }
-                        Button("刪除相簿", systemImage: "trash", role: .destructive) { deleting = album }
-                    } label: {
-                        Image(systemName: "ellipsis")
+                if selection == nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("選擇") { selection = [] }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Button("重新命名", systemImage: "pencil") { naming = Naming(album: album, text: album.name) }
+                            Button("刪除相簿", systemImage: "trash", role: .destructive) { deleting = album }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                        }
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("取消") { selection = nil }
                     }
                 }
             }
@@ -154,9 +163,10 @@ struct AlbumView: View {
     }
 }
 
-// Picks an album for the photo in the viewer, or makes a new one with it.
+// Picks an album for the photos, or makes a new one with them.
 struct AlbumPicker: View {
-    let photoId: String
+    let photoIds: [String]
+    var onAdded: () -> Void = {}
     @State private var albums: [Album]?
     @State private var naming: Naming?
     @Environment(\.dismiss) private var dismiss
@@ -195,7 +205,10 @@ struct AlbumPicker: View {
     }
 
     private func add(to id: String) async {
-        if (try? await Client.shared.changeAlbum(id, add: [photoId])) != nil { dismiss() }
+        if (try? await Client.shared.changeAlbum(id, add: photoIds)) != nil {
+            onAdded()
+            dismiss()
+        }
     }
 }
 
