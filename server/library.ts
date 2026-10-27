@@ -267,7 +267,7 @@ export function createLibrary(config: Config, db: Db, places: Places) {
     // and the same capture time inside the file.
     const sameFile = (p: { size: number; mtime: number; kind: string }) => `${p.size}:${p.mtime}:${p.kind}`
     const goneBy = Map.groupBy(gone, sameFile)
-    const fresh = [...Map.groupBy(found.filter(f => !known.has(f.path)), sameFile)].filter(([key, files]) => files.length === 1 && goneBy.get(key)?.length === 1)
+    const fresh = [...Map.groupBy(found.filter(f => !known.has(f.path) && !queued.has(`${userId}/${f.path}`)), sameFile)].filter(([key, files]) => files.length === 1 && goneBy.get(key)?.length === 1)
     const freshTags = fresh.length ? await exiftool(fresh.map(([, files]) => join(root, files[0].path))) : new Map()
     const moved = new Set<string>()
     for (const [key, files] of fresh) {
@@ -291,8 +291,9 @@ export function createLibrary(config: Config, db: Db, places: Places) {
     const tags = await exiftool(changed.map(f => join(root, f.path)))
     for (const f of changed) {
       const old = known.get(f.path)
+      const meta = readMeta(tags.get(join(root, f.path)) ?? {})
       queued.add(`${userId}/${f.path}`)
-      queue.push({ userId, found: f, meta: readMeta(tags.get(join(root, f.path)) ?? {}), id: old?.id ?? newId(), version: (old?.version ?? 0) + 1 })
+      queue.push({ userId, found: f, meta, id: old?.id ?? newId(), version: (old?.version ?? 0) + 1 })
     }
     if (changed.length || gone.length || moved.size || unread.length)
       log("library.scan", { user: userId, files: found.length, changed: changed.length, removed: gone.length, moved: moved.size, unread: unread.length })

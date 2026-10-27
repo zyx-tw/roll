@@ -141,7 +141,9 @@ export function createFaces(config: Config, db: Db, library: ReturnType<typeof c
       for (const face of found) {
         const vector = Float32Array.from(face.vector)
         const box = face.box.map(n => Math.round(n))
-        const same = decided.find(d => overlap(d.box, box) >= SAME_FACE && dot(d.vector, vector) >= MATCH)
+        // Each old decision goes to one new face at most.
+        const at = decided.findIndex(d => overlap(d.box, box) >= SAME_FACE && dot(d.vector, vector) >= MATCH)
+        const same = at === -1 ? null : decided.splice(at, 1)[0]
         insert.run(newId(), photo.id, photo.user_id, JSON.stringify(box), face.score, new Uint8Array(vector.buffer), same?.person ?? null, same ? "user" : null, Date.now())
       }
       db.query("insert into face_scans (photo_id, version, model) values (?, ?, ?) on conflict(photo_id) do update set version = excluded.version, model = excluded.model").run(photo.id, photo.version, FACE_MODEL)
