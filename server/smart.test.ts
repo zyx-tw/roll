@@ -144,6 +144,10 @@ describe("search", () => {
     const found = await search("海邊")
     expect(found.items[0].id).toBe(idOf("beach"))
   })
+  test("a query for something not there finds nothing", async () => {
+    // 山 shares no axis with any photo: every score is 0, under the floor.
+    expect((await search("山")).items).toEqual([])
+  })
   test("text in a photo comes first, whatever its meaning", async () => {
     expect((await search("password")).items[0].id).toBe(idOf("shot"))
     expect((await search("LAB-2026")).items[0].id).toBe(idOf("shot"))
@@ -154,7 +158,9 @@ describe("search", () => {
     expect((await search("影片")).items.map((p: { id: string }) => p.id)).toEqual([idOf("clip")])
   })
   test("a kind word and free text together search within the kind", async () => {
-    expect((await search("自拍 海邊")).items.map((p: { id: string }) => p.id)).toEqual([idOf("me")])
+    expect((await search("照片 海邊")).items.map((p: { id: string }) => p.id)).toEqual([idOf("beach")])
+    // No selfie shows the sea.
+    expect((await search("自拍 海邊")).items).toEqual([])
   })
   test("each user searches only their own", async () => {
     expect((await search("海邊", "bob")).items.map((p: { id: string }) => p.id)).toEqual([idOf("sea")])
