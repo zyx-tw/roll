@@ -7,6 +7,8 @@ final class Account {
     enum State: Equatable {
         case checking
         case signedOut
+        // The server did not answer: the session may still be good.
+        case unreachable
         // full: the session may browse photos. A web sign-in only uploads.
         case signedIn(full: Bool)
     }
@@ -14,13 +16,26 @@ final class Account {
     var state = State.checking
     var error: String?
 
+    // Only the server saying so signs out: a dropped connection or a server
+    // error leaves the session alone, so the app never falls back to sign-in
+    // or to upload only by accident.
     func refresh() async {
-        guard await Client.shared.me() != nil else {
+        do {
+            guard try await Client.shared.me() != nil else {
+                state = .signedOut
+                return
+            }
+            do {
+                _ = try await Client.shared.send("/api/photos?limit=1")
+                state = .signedIn(full: true)
+            } catch let error as APIError where error.status == 403 {
+                state = .signedIn(full: false)
+            }
+        } catch let error as APIError where error.status == 401 {
             state = .signedOut
-            return
+        } catch {
+            state = .unreachable
         }
-        let browse = try? await Client.shared.send("/api/photos?limit=1")
-        state = .signedIn(full: browse != nil)
     }
 
     // The passkey gives a full session but needs iOS to trust the domain

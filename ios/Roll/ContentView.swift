@@ -19,6 +19,14 @@ struct ContentView: View {
                     Text(error).foregroundStyle(.red).font(.footnote).textSelection(.enabled).padding(.horizontal, 24)
                 }
             }
+        case .unreachable:
+            VStack(spacing: 16) {
+                ContentUnavailableView("連不上 roll", systemImage: "wifi.exclamationmark")
+                Button("重試") {
+                    account.state = .checking
+                }
+                .buttonStyle(.borderedProminent)
+            }
         case .signedIn(full: true):
             LibraryView()
         case .signedIn(full: false):
@@ -115,6 +123,14 @@ struct LibraryView: View {
                     .padding(.horizontal, 16)
                     .frame(height: 44)
                     .glassEffect(.regular, in: .capsule)
+            } else if uploader.failedCount > 0 {
+                Button { Task { await uploader.retry() } } label: {
+                    Label("\(uploader.failedCount) 個上傳失敗", systemImage: "arrow.clockwise")
+                        .font(.footnote.monospacedDigit())
+                        .padding(.horizontal, 16)
+                        .frame(height: 44)
+                }
+                .glassEffect(.regular.interactive(), in: .capsule)
             }
             Spacer()
             PhotosPicker(selection: $picked, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current, photoLibrary: .shared()) {
