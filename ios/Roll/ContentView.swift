@@ -35,6 +35,7 @@ struct LibraryView: View {
     @State private var gallery = Gallery()
     @State private var picked: [PhotosPickerItem] = []
     @State private var scrolledTo: Photo?
+    @State private var showingAlbums = false
 
     var body: some View {
         PhotoGrid(gallery: gallery, topInset: 120, bottomInset: 96) { photo in
@@ -46,6 +47,7 @@ struct LibraryView: View {
             .onChange(of: uploader.finished) { Task { await gallery.waitForPreviews() } }
             .overlay(alignment: .top) { header }
             .overlay(alignment: .bottom) { footer }
+            .fullScreenCover(isPresented: $showingAlbums) { AlbumsView() }
             .onChange(of: picked) {
                 let ids = picked.compactMap(\.itemIdentifier)
                 picked = []
@@ -77,9 +79,14 @@ struct LibraryView: View {
         .shadow(color: .black.opacity(0.25), radius: 4)
     }
 
-    // Upload status on the left, the upload button on the right.
+    // Albums and the upload status on the left, the upload button on the right.
     private var footer: some View {
         HStack(alignment: .bottom) {
+            Button { showingAlbums = true } label: {
+                Image(systemName: "rectangle.stack").font(.title2.weight(.medium)).frame(width: 56, height: 56)
+            }
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel("相簿")
             if let summary = uploader.summary {
                 Text(summary)
                     .font(.footnote.monospacedDigit())

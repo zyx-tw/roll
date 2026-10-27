@@ -596,3 +596,44 @@ describe("titles and descriptions", () => {
     expect((await req(`/api/photos/${id}`, { method: "PATCH", body: "{}" })).status).toBe(401)
   })
 })
+
+describe("albums", () => {
+  const send = (method: string, path: string, value?: unknown, as = "ann") => req(path, { method, body: value === undefined ? undefined : JSON.stringify(value), as })
+  const albums = async (as = "ann") => (await body(req("/api/albums", { as }))).albums as { id: string; name: string; count: number; cover: { id: string } | null }[]
+  const inAlbum = async (id: string, as = "ann") => (await body(req(`/api/photos?album=${id}`, { as }))).items.map((p: { id: string }) => p.id)
+
+  test("make, fill, list, empty and delete an album; photos stay", async () => {
+    const created = await send("POST", "/api/albums", { name: "  京都  " })
+    expect(created.status).toBe(201)
+    const { id } = await body(created)
+    expect((await send("POST", "/api/albums", { name: "京都" })).status).toBe(409)
+    const mine = (await body(req("/api/photos", { as: "ann" }))).items.map((p: { id: string }) => p.id) as string[]
+    const [a, b] = mine
+    expect(await body(send("POST", `/api/albums/${id}/photos`, { add: [a, b, a] }))).toEqual({ added: 2, removed: 0 })
+    expect(await body(send("POST", `/api/albums/${id}/photos`, { add: [a] }))).toEqual({ added: 0, removed: 0 })
+    expect((await albums()).find(x => x.id === id)).toMatchObject({ name: "京都", count: 2 })
+    expect((await inAlbum(id)).sort()).toEqual([a, b].sort())
+    expect(await body(send("POST", `/api/albums/${id}/photos`, { remove: [b] }))).toEqual({ added: 0, removed: 1 })
+    expect(await inAlbum(id)).toEqual([a])
+    expect((await send("PATCH", `/api/albums/${id}`, { name: "大阪" })).status).toBe(200)
+    expect((await albums()).find(x => x.id === id)?.name).toBe("大阪")
+    expect((await send("DELETE", `/api/albums/${id}`)).status).toBe(200)
+    expect((await albums()).find(x => x.id === id)).toBeUndefined()
+    expect((await body(req("/api/photos", { as: "ann" }))).items.length).toBe(mine.length)
+  })
+
+  test("one user never reaches another's albums or photos", async () => {
+    const { id } = await body(send("POST", "/api/albums", { name: "ann only" }))
+    const bobPhoto = (await body(req("/api/photos", { as: "bob" }))).items[0].id
+    // Bob's photo cannot join Ann's album.
+    expect(await body(send("POST", `/api/albums/${id}/photos`, { add: [bobPhoto] }))).toEqual({ added: 0, removed: 0 })
+    for (const [method, path, value] of [["PATCH", `/api/albums/${id}`, { name: "x" }], ["DELETE", `/api/albums/${id}`], ["POST", `/api/albums/${id}/photos`, { add: [bobPhoto] }]] as const)
+      expect((await send(method, path, value, "bob")).status).toBe(404)
+    expect(await albums("bob")).toEqual([])
+    expect(await inAlbum(id, "bob")).toEqual([])
+    expect((await send("POST", "/api/albums", { name: "" })).status).toBe(400)
+    expect((await send("POST", "/api/albums", { name: "x".repeat(101) })).status).toBe(400)
+    expect((await send("POST", `/api/albums/${id}/photos`, { add: ["../../etc"] })).status).toBe(400)
+    expect((await req("/api/albums")).status).toBe(401)
+  })
+})

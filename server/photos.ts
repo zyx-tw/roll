@@ -4,7 +4,7 @@ import { lstat, rename, rm } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
 import type { Config } from "./config"
 import type { Db, Photo, User } from "./db"
-import { HttpError, fileResponse, json } from "./http"
+import { HttpError, fileResponse, json, readJson } from "./http"
 import { DESCRIPTION_MAX, TITLE_MAX, cameraInfo, noteKey, textKey, type createLibrary } from "./library"
 import type { createPlayback } from "./playback"
 import { log } from "./otel"
@@ -107,6 +107,12 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
     if (clause) {
       where.push(...clause.where)
       args.push(...clause.args)
+    }
+    // ?album=<id>: only that album's photos. The user check on p covers the album too.
+    const album = url.searchParams.get("album")
+    if (album) {
+      where.push("exists (select 1 from album_photos ap where ap.album_id = ? and ap.photo_id = p.id and ap.user_id = p.user_id)")
+      args.push(album)
     }
     const from = "from photos p left join photo_index i on i.photo_id = p.id left join photo_notes n on n.photo_id = p.id and n.user_id = p.user_id"
     if (clause?.free.length) return ranked(user, url, limit, `${from} where ${where.join(" and ")}`, args, clause.free)
@@ -236,8 +242,7 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
   // an empty one clears it. The row stays, so a scan never seeds it again.
   async function note(req: Request, user: User, id: string) {
     const photo = find(user, id)
-    const body = (await req.json().catch(() => null)) as { title?: unknown; description?: unknown } | null
-    if (!body || typeof body !== "object") throw new HttpError(400, "bad body")
+    const body = await readJson(req)
     const field = (value: unknown, max: number) => {
       if (value === undefined) return undefined
       if (typeof value !== "string" || value.length > max) throw new HttpError(400, "bad field")

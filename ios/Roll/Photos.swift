@@ -36,8 +36,9 @@ nonisolated struct Page: Decodable, Sendable {
 }
 
 extension Client {
-    func photos(after cursor: String?, query: String = "") async throws -> Page {
+    func photos(after cursor: String?, query: String = "", album: String? = nil) async throws -> Page {
         var path = "/api/photos?limit=120"
+        if let album { path += "&album=\(album)" }
         if let cursor { path += "&cursor=\(cursor)" }
         if !query.isEmpty, let q = query.addingPercentEncoding(withAllowedCharacters: .alphanumerics) { path += "&q=\(q)" }
         return try JSONDecoder().decode(Page.self, from: try await send(path))

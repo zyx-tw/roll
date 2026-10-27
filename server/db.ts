@@ -169,6 +169,24 @@ export function openDb(path: string) {
     );
     create index if not exists photo_notes_user on photo_notes(user_id);
   `)
+  // Albums: named sets of one user's photos (albums.ts).
+  db.exec(`
+    create table if not exists albums (
+      id text primary key,
+      user_id text not null references users(id),
+      name text not null,
+      created_at integer not null,
+      unique (user_id, name)
+    );
+    create table if not exists album_photos (
+      album_id text not null references albums(id) on delete cascade,
+      photo_id text not null references photos(id) on delete cascade,
+      user_id text not null,
+      added_at integer not null,
+      primary key (album_id, photo_id)
+    );
+    create index if not exists album_photos_photo on album_photos(photo_id);
+  `)
   return db
 }
 
