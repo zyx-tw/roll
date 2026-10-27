@@ -27,6 +27,13 @@ final class Gallery {
         next = page.next
     }
 
+    // A new title or description, from the info sheet.
+    func note(_ id: String, title: String, note: String) {
+        guard let index = photos.firstIndex(where: { $0.id == id }) else { return }
+        photos[index].title = title
+        photos[index].note = note
+    }
+
     func remove(_ photo: Photo) {
         photos.removeAll { $0.id == photo.id }
         if let total { self.total = total - 1 }
@@ -124,31 +131,37 @@ struct Thumb: View {
 }
 
 // Full screen, swipe sideways for the next item, pull down to close, tap to
-// hide the bar. The bar: when it was taken on the left, delete on the right.
+// hide the controls. As in Photos: back and the album menu at the top, with
+// the title or the date between them; the strip of thumbnails, share and
+// delete at the bottom.
 struct Viewer: View {
     let gallery: Gallery
-    @State private var current: Photo?
+    // By id: a new title changes the photo, not which one is shown.
+    @State private var currentId: String?
     @State private var drag: CGSize = .zero
     @State private var chrome = true
     @State private var confirming = false
     @State private var info: Photo?
+    @State private var sharing: SharedFile?
+    @State private var preparing = false
     @Environment(\.dismiss) private var dismiss
 
     init(gallery: Gallery, start: Photo) {
         self.gallery = gallery
-        _current = State(initialValue: start)
+        _currentId = State(initialValue: start.id)
     }
 
     private var photos: [Photo] { gallery.photos.reversed() }
+    private var current: Photo? { photos.first { $0.id == currentId } }
     private var progress: Double { min(max(drag.height / 300, 0), 1) }
 
     var body: some View {
         ZStack {
             Color.black.opacity(1 - progress).ignoresSafeArea()
-            TabView(selection: $current) {
+            TabView(selection: $currentId) {
                 ForEach(photos) { photo in
-                    Page(photo: photo, active: current == photo)
-                        .tag(Optional(photo))
+                    Page(photo: photo, active: currentId == photo.id)
+                        .tag(Optional(photo.id))
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
@@ -156,8 +169,16 @@ struct Viewer: View {
             .scaleEffect(1 - progress * 0.3)
             .offset(x: drag.width * 0.5, y: max(drag.height, 0))
         }
+        .overlay(alignment: .top) {
+            if chrome, let current, progress == 0 { top(current) }
+        }
         .overlay(alignment: .bottom) {
-            if chrome, let current, progress == 0 { bar(current) }
+            if chrome, let current, progress == 0 {
+                VStack(spacing: 16) {
+                    Strip(photos: photos, currentId: $currentId)
+                    bottom(current)
+                }
+            }
         }
         .onTapGesture { chrome.toggle() }
         .simultaneousGesture(
@@ -175,24 +196,75 @@ struct Viewer: View {
                 }
         )
         .statusBarHidden(!chrome)
-        .sheet(item: $info) { InfoSheet(photo: $0) }
+        .sheet(item: $info) { photo in
+            InfoSheet(photo: photo) { title, note in gallery.note(photo.id, title: title, note: note) }
+        }
+        .sheet(item: $sharing, onDismiss: { sharing.map { try? FileManager.default.removeItem(at: $0.url.deletingLastPathComponent()) } }) {
+            ShareSheet(url: $0.url).ignoresSafeArea()
+        }
         .confirmationDialog("刪除這個項目？", isPresented: $confirming, titleVisibility: .visible) {
             Button("刪除", role: .destructive) { Task { await delete() } }
         }
     }
 
-    private func bar(_ photo: Photo) -> some View {
-        HStack {
-            // Tap the date for the details.
+    private func top(_ photo: Photo) -> some View {
+        HStack(spacing: 12) {
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.left").font(.title3.weight(.semibold)).frame(width: 52, height: 52)
+            }
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel("返回")
+            Spacer(minLength: 0)
+            // Tap for the details, where the title and description are edited.
             Button { info = photo } label: {
                 VStack(spacing: 0) {
-                    Text(relativeDay(photo.takenAt)).font(.subheadline.weight(.semibold))
-                    Text(clockTime(photo.takenAt)).font(.caption.weight(.medium)).monospacedDigit()
+                    Text(heading(photo).0).font(.subheadline.weight(.semibold))
+                    Text(heading(photo).1).font(.caption.weight(.medium)).monospacedDigit()
                 }
+                .lineLimit(1)
                 .padding(.horizontal, 22)
                 .frame(height: 52)
             }
             .glassEffect(.regular.interactive(), in: .capsule)
+            Spacer(minLength: 0)
+            // Albums come later.
+            Menu {
+                Button("加入相簿", systemImage: "rectangle.stack.badge.plus") {}.disabled(true)
+            } label: {
+                Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 52, height: 52)
+            }
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel("更多")
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 20)
+    }
+
+    // Title and description; title and time; the date and description; or the date and time.
+    private func heading(_ photo: Photo) -> (String, String) {
+        let title = photo.title ?? ""
+        let note = photo.note ?? ""
+        let day = relativeDay(photo.takenAt)
+        let time = clockTime(photo.takenAt)
+        switch (title.isEmpty, note.isEmpty) {
+        case (false, false): return (title, note)
+        case (false, true): return (title, "\(day) \(time)")
+        case (true, false): return (day, note)
+        case (true, true): return (day, time)
+        }
+    }
+
+    private func bottom(_ photo: Photo) -> some View {
+        HStack {
+            Button { Task { await share(photo) } } label: {
+                Group {
+                    if preparing { ProgressView().tint(.white) } else { Image(systemName: "square.and.arrow.up").font(.title3) }
+                }
+                .frame(width: 52, height: 52)
+            }
+            .glassEffect(.regular.interactive(), in: .circle)
+            .disabled(preparing)
+            .accessibilityLabel("分享")
             Spacer()
             Button { confirming = true } label: {
                 Image(systemName: "trash").font(.title3).frame(width: 52, height: 52)
@@ -203,6 +275,13 @@ struct Viewer: View {
         .foregroundStyle(.white)
         .padding(.horizontal, 20)
         .padding(.bottom, 4)
+    }
+
+    // Shares the original file, fetched first.
+    private func share(_ photo: Photo) async {
+        preparing = true
+        defer { preparing = false }
+        if let url = try? await Client.shared.original(photo) { sharing = SharedFile(url: url) }
     }
 
     // Moves the item to the trash on the server, then shows the next one.
@@ -218,7 +297,7 @@ struct Viewer: View {
         gallery.remove(photo)
         let rest = photos
         if rest.isEmpty { return dismiss() }
-        current = rest[min(index, rest.count - 1)]
+        currentId = rest[min(index, rest.count - 1)].id
     }
 
     struct Page: View {
@@ -250,6 +329,68 @@ struct Viewer: View {
             .onDisappear { player?.pause() }
         }
     }
+}
+
+// The thumbnails under the photo, as in Photos: the current one wider and
+// centred, the strip following each swipe. Tap one to show it.
+struct Strip: View {
+    let photos: [Photo]
+    @Binding var currentId: String?
+    private let height: CGFloat = 44
+
+    var body: some View {
+        GeometryReader { geo in
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 2) {
+                        ForEach(photos) { photo in
+                            let active = photo.id == currentId
+                            StripThumb(photo: photo)
+                                .frame(width: active ? min(max(height * Double(photo.width) / Double(max(photo.height, 1)), height * 0.75), height * 1.8) : height * 0.68, height: height)
+                                .clipShape(.rect(cornerRadius: 2))
+                                .padding(.horizontal, active ? 6 : 0)
+                                .id(photo.id)
+                                .onTapGesture { currentId = photo.id }
+                        }
+                    }
+                    .padding(.horizontal, geo.size.width / 2)
+                }
+                .onAppear { proxy.scrollTo(currentId, anchor: .center) }
+                .onChange(of: currentId) { _, id in
+                    withAnimation(.snappy(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
+                }
+            }
+        }
+        .frame(height: height)
+    }
+}
+
+struct StripThumb: View {
+    let photo: Photo
+    @State private var image: UIImage?
+
+    var body: some View {
+        Color.white.opacity(0.1)
+            .overlay {
+                if let image { Image(uiImage: image).resizable().scaledToFill() }
+            }
+            .clipped()
+            .contentShape(.rect)
+            .task(id: photo.id) { image = await ImageCache.shared.image(photo.url("thumb")) }
+    }
+}
+
+struct SharedFile: Identifiable {
+    let url: URL
+    var id: URL { url }
+}
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 private let taipei = TimeZone(identifier: "Asia/Taipei")!

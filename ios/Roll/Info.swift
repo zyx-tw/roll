@@ -31,6 +31,8 @@ nonisolated struct Detail: Decodable, Sendable {
 // file, the camera, where.
 struct InfoSheet: View {
     let photo: Photo
+    // Told once the server has a new title and description.
+    var onSaved: (String, String) -> Void = { _, _ in }
     @State private var detail: Detail?
     @State private var title = ""
     @State private var note = ""
@@ -92,8 +94,11 @@ struct InfoSheet: View {
         guard detail != nil, next != saved else { return }
         saved = next
         let id = photo.id
+        let done = onSaved
         Task {
-            _ = try? await Client.shared.send("/api/photos/\(id)", method: "PATCH", json: ["title": next.0, "description": next.1])
+            if (try? await Client.shared.send("/api/photos/\(id)", method: "PATCH", json: ["title": next.0, "description": next.1])) != nil {
+                done(next.0, next.1)
+            }
         }
     }
 
