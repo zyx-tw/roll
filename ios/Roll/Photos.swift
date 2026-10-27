@@ -12,7 +12,15 @@ nonisolated struct Photo: Decodable, Identifiable, Hashable, Sendable {
     let duration: Double?
     let live: Bool
     let place: String?
+    var title: String?
+    // "description" on the server.
+    var note: String?
     let v: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, takenAt, width, height, duration, live, place, title, v
+        case note = "description"
+    }
 
     var isVideo: Bool { kind == "video" }
 
@@ -40,6 +48,18 @@ extension Client {
               let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return 0 }
         return (body["files"] as? Int ?? 0) + ((body["scanning"] as? Bool ?? false) ? 1 : 0)
+    }
+
+    // The original, saved under its own name in a fresh temporary folder, to share.
+    func original(_ photo: Photo) async throws -> URL {
+        let detail = try JSONSerialization.jsonObject(with: try await send("/api/photos/\(photo.id)")) as? [String: Any]
+        let name = (detail?["name"] as? String).map { ($0 as NSString).lastPathComponent }.flatMap { $0.isEmpty ? nil : $0 } ?? photo.id
+        let data = try await send("/api/photos/\(photo.id)/original?v=\(photo.v)")
+        let folder = FileManager.default.temporaryDirectory.appending(path: "share-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appending(path: name)
+        try data.write(to: file)
+        return file
     }
 
     // The session cookie, for players that fetch media themselves.

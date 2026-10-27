@@ -35,6 +35,9 @@ export type Photo = {
   country: string | null
   status: "ready" | "failed"
   version: number
+  // From photo_notes, when a query joins it.
+  title?: string | null
+  description?: string | null
 }
 
 export function openDb(path: string) {

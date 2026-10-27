@@ -576,6 +576,8 @@ describe("titles and descriptions", () => {
     expect(await body(patch(id, { title: "  生日  " }))).toEqual({ title: "生日", description: "和 媽媽 在海邊" })
     expect(await find("生日")).toEqual([id])
     expect(await find("日落")).toEqual([])
+    const item = (await body(req("/api/photos?limit=500", { as: "ann" }))).items.find((p: { id: string }) => p.id === id)
+    expect(item).toMatchObject({ title: "生日", description: "和 媽媽 在海邊" })
     const later = new Date(Date.now() + 5000)
     utimesSync(path(), later, later)
     await app.library.scan()

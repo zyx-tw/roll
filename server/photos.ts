@@ -28,6 +28,8 @@ export function view(photo: Photo, places?: Places) {
     duration: photo.duration,
     live: photo.live_path !== null,
     place: places?.label(photo.place_id) ?? null,
+    title: photo.title ?? "",
+    description: photo.description ?? "",
     v: photo.version,
   }
 }
@@ -114,7 +116,7 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
       where.push("(p.taken_at < ? or (p.taken_at = ? and p.id < ?))")
       args.push(Number(cursor[1]), Number(cursor[1]), cursor[2])
     }
-    const rows = db.query(`select p.* ${from} where ${where.join(" and ")} order by p.taken_at desc, p.id desc limit ?`).all(...args, limit + 1) as Photo[]
+    const rows = db.query(`select p.*, n.title, n.description ${from} where ${where.join(" and ")} order by p.taken_at desc, p.id desc limit ?`).all(...args, limit + 1) as Photo[]
     const more = rows.length > limit
     const items = rows.slice(0, limit)
     const last = items.at(-1)
@@ -135,7 +137,7 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
     const rest = smart.enabled ? await smart.rank(candidates.filter(c => !noted.has(c.id)), free) : []
     const ids = [...noted, ...rest]
     const page = ids.slice(offset, offset + limit)
-    const get = db.query("select * from photos where id = ? and user_id = ?")
+    const get = db.query("select p.*, n.title, n.description from photos p left join photo_notes n on n.photo_id = p.id and n.user_id = p.user_id where p.id = ? and p.user_id = ?")
     const items = page.map(id => get.get(id, user.id) as Photo | null).filter((p): p is Photo => p !== null)
     log("search.ranked", { candidates: candidates.length, matches: ids.length, notes: noted.size, words: free.length })
     return json({ items: items.map(photo => view(photo, places)), next: offset + limit < ids.length ? `r${offset + limit}` : null, total: offset ? undefined : ids.length })
