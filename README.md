@@ -12,15 +12,15 @@ You copy the originals from a phone to the server. roll reads them, makes small 
 
 ## Features
 
+- **Use the iOS app**: the timeline, the viewer and uploads live in the app. The web only signs in and registers passkeys.
 - **Sign in with a passkey**: Touch ID or Face ID, no password.
 - **Invite a person**: a one-time link registers a passkey for one account.
 - **Browse a timeline**: a masonry wall in capture order, loaded page by page.
-- **Search in one box**: dates (`4/15`, `2026 年 4 月`), towns (`京都`, `Kyoto`), countries (`日本`) and kinds (`自拍`, `截圖`, `影片`, `原況`, `全景`), combined; press `/` or Cmd+K.
+- **Search in one box**: dates (`4/15`, `2026 年 4 月`), towns (`京都`, `Kyoto`), countries (`日本`) and kinds (`自拍`, `截圖`, `影片`, `原況`, `全景`), combined.
 - **Search by meaning**: other words find photos and video frames that show them (`海邊`, `京都拉麵`), and text inside photos comes first (screenshots, menus, tickets).
-- **Name people**: faces of one person gather into a group; name it once in the search box and every photo of them answers to that name (`媽媽`, `媽媽 京都`).
-- **Upload**: pick files or drop them on the page; originals keep every byte.
+- **Name people**: faces of one person gather into a group; name it once and every photo of them answers to that name (`媽媽`, `媽媽 京都`).
+- **Upload**: the app sends originals from Photos; they keep every byte.
 - **Delete**: a photo moves to `<user>/.trash/<day>/`, out of the timeline.
-- **Open a photo**: a full-screen viewer with arrow keys, swipe and download of the original.
 - **Keep iPhone formats**: HEIC photos, HEVC videos and Live Photos play as they are.
 
 ## Quick start
@@ -32,7 +32,7 @@ bun server/index.ts invite loki Loki
 bun run start
 ```
 
-Open the printed link and register a passkey. Copy photos into `data/library/loki/`; a scan picks them up.
+Open the printed link and register a passkey, then sign in from the iOS app. Copy photos into `data/library/loki/`; a scan picks them up.
 
 ## Usage
 
@@ -83,7 +83,7 @@ Facts for coding agents and LLM tools. The rules for changing the code are in [A
 - **Verify**: `bun test server`
 - **Config**: `ROLL_ORIGIN`, `ROLL_DATA`, `ROLL_LIBRARY`, `ROLL_DIST`, `ROLL_PORT`, `ROLL_SCAN_MINUTES`, `ROLL_WORKERS`, `ROLL_RESERVE_GB`, `ROLL_GEONAMES`, `ROLL_EMBED_URL`, `ROLL_EMBED_TOKEN`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`
 - **Secrets**: the OTLP header and `ROLL_EMBED_TOKEN` live in `/etc/roll/env` on the server.
-- **Limits**: Search by meaning and people need the embed service. Search lives on the web; the iOS app has none yet.
+- **Limits**: Search by meaning and people need the embed service. The API has search and people; the iOS app has no screen for them yet.
 
 ## Development
 
