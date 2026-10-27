@@ -17,7 +17,15 @@ const DEFAULT_OFFSET = "+08:00"
 export const SIZES = { large: "2048x2048>", thumb: "640x2000>" } as const
 
 type Found = { path: string; size: number; mtime: number; kind: Photo["kind"]; live: string | null }
-type Meta = { takenAt: number | null; lat: number | null; lon: number | null; duration: number | null }
+type Meta = { takenAt: number | null; lat: number | null; lon: number | null; duration: number | null; title: string; description: string }
+
+// For matching typed words against text: one form for both.
+export const textKey = (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, "")
+// A photo's title and description, kept apart so a word never spans the two.
+export const noteKey = (title: string, description: string) => `${textKey(title)}|${textKey(description)}`
+
+export const TITLE_MAX = 200
+export const DESCRIPTION_MAX = 2000
 
 export const newId = () => randomBytes(9).toString("base64url")
 
@@ -71,14 +79,18 @@ export function readMeta(tags: Record<string, unknown>): Meta {
   const lat = typeof tags.GPSLatitude === "number" ? tags.GPSLatitude : null
   const lon = typeof tags.GPSLongitude === "number" ? tags.GPSLongitude : null
   const duration = typeof tags.Duration === "number" ? tags.Duration : null
-  return { takenAt, lat: lat !== null && lon !== null && (lat !== 0 || lon !== 0) ? lat : null, lon: lat !== null && lon !== null && (lat !== 0 || lon !== 0) ? lon : null, duration }
+  // XMP and QuickTime Title and Description, else IPTC ObjectName and Caption-Abstract.
+  const text = (...values: unknown[]) => String(values.find(v => (typeof v === "string" || typeof v === "number") && String(v).trim()) ?? "").trim()
+  const title = text(tags.Title, tags.ObjectName).slice(0, TITLE_MAX)
+  const description = text(tags.Description, tags["Caption-Abstract"]).slice(0, DESCRIPTION_MAX)
+  return { title, description, takenAt, lat: lat !== null && lon !== null && (lat !== 0 || lon !== 0) ? lat : null, lon: lat !== null && lon !== null && (lat !== 0 || lon !== 0) ? lon : null, duration }
 }
 
 async function exiftool(paths: string[]): Promise<Map<string, Record<string, unknown>>> {
   const out = new Map<string, Record<string, unknown>>()
   for (let i = 0; i < paths.length; i += 100) {
     const chunk = paths.slice(i, i + 100)
-    const text = await run(["exiftool", "-json", "-n", "-q", "-q", "-fast", "-DateTimeOriginal", "-OffsetTimeOriginal", "-OffsetTime", "-OffsetTimeDigitized", "-CreationDate", "-CreateDate", "-MIMEType", "-GPSLatitude", "-GPSLongitude", "-Duration", ...chunk]).catch(() => "[]")
+    const text = await run(["exiftool", "-json", "-n", "-q", "-q", "-fast", "-DateTimeOriginal", "-OffsetTimeOriginal", "-OffsetTime", "-OffsetTimeDigitized", "-CreationDate", "-CreateDate", "-MIMEType", "-GPSLatitude", "-GPSLongitude", "-Duration", "-Title", "-Description", "-ObjectName", "-Caption-Abstract", ...chunk]).catch(() => "[]")
     for (const tags of JSON.parse(text || "[]") as Record<string, unknown>[]) out.set(String(tags.SourceFile), tags)
   }
   return out
@@ -185,6 +197,11 @@ export function createLibrary(config: Config, db: Db, places: Places) {
          width = excluded.width, height = excluded.height, duration = excluded.duration, lat = excluded.lat, lon = excluded.lon,
          live_path = excluded.live_path, status = excluded.status, version = excluded.version, place_id = excluded.place_id, country = excluded.country`,
     ).run(id, userId, found.path, found.size, found.mtime, found.kind, meta.takenAt ?? found.mtime, size.width, size.height, meta.duration, meta.lat, meta.lon, found.live, status, version, town?.id ?? null, town?.country ?? null)
+    // The file's own title and description, only while the user has none.
+    if (meta.title || meta.description)
+      db.query("insert into photo_notes (photo_id, user_id, title, description, text_key, updated_at) values (?, ?, ?, ?, ?, ?) on conflict(photo_id) do nothing").run(
+        id, userId, meta.title, meta.description, noteKey(meta.title, meta.description), Date.now(),
+      )
   }
 
   function pump() {

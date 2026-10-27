@@ -152,6 +152,20 @@ export function openDb(path: string) {
       model text not null
     );
   `)
+  // A title and a description the user gives a photo; a scan seeds them once
+  // from the file's own (XMP, IPTC, QuickTime) and never overwrites the user's.
+  // text_key is both, for matching search words (library.ts noteKey).
+  db.exec(`
+    create table if not exists photo_notes (
+      photo_id text primary key references photos(id) on delete cascade,
+      user_id text not null,
+      title text not null default '',
+      description text not null default '',
+      text_key text not null default '',
+      updated_at integer not null
+    );
+    create index if not exists photo_notes_user on photo_notes(user_id);
+  `)
   return db
 }
 

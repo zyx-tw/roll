@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path"
 import type { Config } from "./config"
 import type { Db, Photo, User } from "./db"
 import { HttpError, fileResponse, json } from "./http"
-import { cameraInfo, type createLibrary } from "./library"
+import { DESCRIPTION_MAX, TITLE_MAX, cameraInfo, noteKey, textKey, type createLibrary } from "./library"
 import type { createPlayback } from "./playback"
 import { log } from "./otel"
 import { ensureDir, resolveExisting, userRoot } from "./paths"
@@ -106,7 +106,7 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
       where.push(...clause.where)
       args.push(...clause.args)
     }
-    const from = "from photos p left join photo_index i on i.photo_id = p.id"
+    const from = "from photos p left join photo_index i on i.photo_id = p.id left join photo_notes n on n.photo_id = p.id and n.user_id = p.user_id"
     if (clause?.free.length) return ranked(user, url, limit, `${from} where ${where.join(" and ")}`, args, clause.free)
     // The cursor is the last item's time and id: "<ms>_<id>".
     const cursor = /^(\d+)_([A-Za-z0-9_-]{12})$/.exec(url.searchParams.get("cursor") ?? "")
@@ -124,16 +124,20 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
   }
 
   // Free words rank by relevance instead of time. The cursor is an offset into
-  // the ranking: "r<n>". Without the embed service, nothing matches free words.
+  // the ranking: "r<n>". Photos whose title or description holds every word
+  // come first, newest first; then smart.ts ranks the rest, when the embed
+  // service is there.
   async function ranked(user: User, url: URL, limit: number, fromWhere: string, args: (string | number)[], free: string[]) {
-    if (!smart.enabled) return json({ items: [], next: null, total: 0 })
     const offset = Number(/^r(\d+)$/.exec(url.searchParams.get("cursor") ?? "")?.[1] ?? 0)
-    const candidates = db.query(`select p.id, p.version, i.text_key, i.indexed_at as indexed ${fromWhere}`).all(...args) as Parameters<Smart["rank"]>[0]
-    const ids = await smart.rank(candidates, free)
+    const candidates = db.query(`select p.id, p.version, i.text_key, i.indexed_at as indexed, n.text_key as note_key ${fromWhere} order by p.taken_at desc, p.id desc`).all(...args) as (Parameters<Smart["rank"]>[0][number] & { note_key: string | null })[]
+    const keys = free.map(textKey).filter(Boolean)
+    const noted = new Set(candidates.filter(c => c.note_key && keys.length && keys.every(key => c.note_key!.split("|").some(part => part.includes(key)))).map(c => c.id))
+    const rest = smart.enabled ? await smart.rank(candidates.filter(c => !noted.has(c.id)), free) : []
+    const ids = [...noted, ...rest]
     const page = ids.slice(offset, offset + limit)
     const get = db.query("select * from photos where id = ? and user_id = ?")
     const items = page.map(id => get.get(id, user.id) as Photo | null).filter((p): p is Photo => p !== null)
-    log("search.ranked", { candidates: candidates.length, matches: ids.length, words: free.length })
+    log("search.ranked", { candidates: candidates.length, matches: ids.length, notes: noted.size, words: free.length })
     return json({ items: items.map(photo => view(photo, places)), next: offset + limit < ids.length ? `r${offset + limit}` : null, total: offset ? undefined : ids.length })
   }
 
@@ -226,10 +230,34 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
     }
   }
 
+  // Sets a photo's title and description. A field left out keeps its value;
+  // an empty one clears it. The row stays, so a scan never seeds it again.
+  async function note(req: Request, user: User, id: string) {
+    const photo = find(user, id)
+    const body = (await req.json().catch(() => null)) as { title?: unknown; description?: unknown } | null
+    if (!body || typeof body !== "object") throw new HttpError(400, "bad body")
+    const field = (value: unknown, max: number) => {
+      if (value === undefined) return undefined
+      if (typeof value !== "string" || value.length > max) throw new HttpError(400, "bad field")
+      return value.trim()
+    }
+    const title = field(body.title, TITLE_MAX)
+    const description = field(body.description, DESCRIPTION_MAX)
+    const old = (db.query("select title, description from photo_notes where photo_id = ? and user_id = ?").get(photo.id, user.id) as { title: string; description: string } | null) ?? { title: "", description: "" }
+    const next = { title: title ?? old.title, description: description ?? old.description }
+    db.query(
+      `insert into photo_notes (photo_id, user_id, title, description, text_key, updated_at) values (?, ?, ?, ?, ?, ?)
+       on conflict(photo_id) do update set title = excluded.title, description = excluded.description, text_key = excluded.text_key, updated_at = excluded.updated_at`,
+    ).run(photo.id, user.id, next.title, next.description, noteKey(next.title, next.description), Date.now())
+    log("photo.noted", { id: photo.id.slice(0, 4), title: next.title.length, description: next.description.length })
+    return json(next)
+  }
+
   async function handle(req: Request, url: URL, user: User): Promise<Response> {
     if (url.pathname === "/api/photos/pending" && req.method === "GET") return json({ ...library.pending(user.id), indexing: smart.pending(user.id) + faces.pending(user.id) })
     const target = /^\/api\/photos\/([^/]+)$/.exec(url.pathname)
     if (req.method === "DELETE" && target) return remove(user, target[1])
+    if (req.method === "PATCH" && target) return note(req, user, target[1])
     if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405)
     if (url.pathname === "/api/photos") return timeline(user, url)
     const match = /^\/api\/photos\/([^/]+)\/(thumb|large|original|live|play)$/.exec(url.pathname)
@@ -244,7 +272,8 @@ export function createPhotos(config: Config, db: Db, library: ReturnType<typeof 
       const [long, short] = pixels.length === 2 ? [Math.max(...pixels), Math.min(...pixels)] : [Math.max(photo.width, photo.height), Math.min(photo.width, photo.height)]
       const [width, height] = photo.height > photo.width ? [short, long] : [long, short]
       const people = (db.query("select distinct ps.name from faces f join persons ps on ps.id = f.person_id where f.photo_id = ? and f.user_id = ? and ps.user_id = ? order by ps.name").all(photo.id, user.id, user.id) as { name: string }[]).map(r => r.name)
-      return json({ ...view(photo, places), name: photo.path.split("/").pop(), size: photo.size, lat: photo.lat, lon: photo.lon, people, camera: { ...camera, width, height } })
+      const notes = db.query("select title, description from photo_notes where photo_id = ? and user_id = ?").get(photo.id, user.id) as { title: string; description: string } | null
+      return json({ ...view(photo, places), title: notes?.title ?? "", description: notes?.description ?? "", name: photo.path.split("/").pop(), size: photo.size, lat: photo.lat, lon: photo.lon, people, camera: { ...camera, width, height } })
     }
     throw new HttpError(404)
   }

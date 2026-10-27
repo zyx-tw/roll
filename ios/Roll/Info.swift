@@ -18,6 +18,8 @@ nonisolated struct Camera: Decodable, Sendable {
 }
 
 nonisolated struct Detail: Decodable, Sendable {
+    let title: String?
+    let description: String?
     let name: String
     let size: Int
     let lat: Double?
@@ -25,10 +27,16 @@ nonisolated struct Detail: Decodable, Sendable {
     let camera: Camera
 }
 
-// What Photos shows under "i": when, the file, the camera, where. Nothing to edit.
+// What Photos shows under "i": when, a title and description to edit, the
+// file, the camera, where.
 struct InfoSheet: View {
     let photo: Photo
     @State private var detail: Detail?
+    @State private var title = ""
+    @State private var note = ""
+    // What the server has, so only a change is sent.
+    @State private var saved = ("", "")
+    @FocusState private var editing: Bool
 
     var body: some View {
         ScrollView {
@@ -38,6 +46,7 @@ struct InfoSheet: View {
                     .padding(16)
                     .block()
                 if let detail {
+                    notes
                     card(detail)
                     if let lat = detail.lat, let lon = detail.lon { map(lat, lon) }
                 } else {
@@ -49,9 +58,42 @@ struct InfoSheet: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .task {
-            if let data = try? await Client.shared.send("/api/photos/\(photo.id)") {
-                detail = try? JSONDecoder().decode(Detail.self, from: data)
+            if let data = try? await Client.shared.send("/api/photos/\(photo.id)"),
+               let loaded = try? JSONDecoder().decode(Detail.self, from: data) {
+                title = loaded.title ?? ""
+                note = loaded.description ?? ""
+                saved = (title, note)
+                detail = loaded
             }
+        }
+        .onChange(of: editing) { _, now in if !now { save() } }
+        .onDisappear { save() }
+    }
+
+    // A title and a description, both searchable. Saved when editing ends.
+    private var notes: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            TextField("加入標題", text: $title)
+                .font(.subheadline.weight(.semibold))
+                .submitLabel(.done)
+                .padding(16)
+            Divider()
+            TextField("加入說明", text: $note, axis: .vertical)
+                .font(.subheadline)
+                .lineLimit(1...6)
+                .padding(16)
+        }
+        .focused($editing)
+        .block()
+    }
+
+    private func save() {
+        let next = (String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200)), String(note.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2000)))
+        guard detail != nil, next != saved else { return }
+        saved = next
+        let id = photo.id
+        Task {
+            _ = try? await Client.shared.send("/api/photos/\(id)", method: "PATCH", json: ["title": next.0, "description": next.1])
         }
     }
 

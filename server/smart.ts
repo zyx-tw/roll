@@ -7,7 +7,7 @@ import { join } from "node:path"
 import type { Config } from "./config"
 import type { Db, Photo } from "./db"
 import { EmbedDown, type Embed } from "./embed"
-import { newId, run, type createLibrary } from "./library"
+import { newId, run, textKey, type createLibrary } from "./library"
 import { log } from "./otel"
 import { resolveExisting } from "./paths"
 
@@ -27,8 +27,7 @@ const AT_LEAST = 3
 // 飛機), for something absent 0.63 to 0.66 (貓, 雪, 婚禮, 游泳池).
 export const FLOOR = 0.67
 
-// For matching typed text against text in photos: one form for both.
-export const textKey = (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, "")
+export { textKey }
 
 // Words that pick a kind of photo. Each is a SQL condition on photos p and photo_index i.
 const KINDS: [string[], string][] = [
