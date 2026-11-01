@@ -29,7 +29,7 @@ export function RollApp() {
       await post("/api/auth/login/verify", { response })
       await refresh()
     } catch {
-      toast.error("登入失敗")
+      toast.error("Sign-in failed")
     }
   }
 
@@ -41,7 +41,7 @@ export function RollApp() {
       window.history.replaceState(null, "", "/")
       await refresh()
     } catch {
-      toast.error("註冊失敗")
+      toast.error("Sign-up failed")
     }
   }
 
@@ -50,7 +50,7 @@ export function RollApp() {
       const { code } = await post<{ code: string }>("/api/auth/app/code", { challenge: appChallenge })
       window.location.href = `tw.zyx.roll://login?code=${encodeURIComponent(code)}`
     } catch {
-      toast.error("登入失敗")
+      toast.error("Sign-in failed")
     }
   }
 
@@ -60,14 +60,14 @@ export function RollApp() {
   }
 
   return (
-    <TaskShell title="roll" lang="zh-TW" wide showTitle={false} bottomCorners={false}>
+    <TaskShell title="roll" wide showTitle={false} bottomCorners={false}>
       <section aria-label="roll" className="fixed inset-0 flex flex-col items-center justify-center gap-3">
-        {me && !me.user && (invite ? <Button onClick={register}>註冊</Button> : <Button onClick={login}>登入</Button>)}
-        {me?.user && forApp && <Button onClick={toApp}>回到 roll</Button>}
+        {me && !me.user && (invite ? <Button onClick={register}>Sign up</Button> : <Button onClick={login}>Sign in</Button>)}
+        {me?.user && forApp && <Button onClick={toApp}>Back to roll</Button>}
         {me?.user && !forApp && (
           <>
-            <p className="text-body">請用 roll App</p>
-            <Button variant="ghost" onClick={logout}>登出</Button>
+            <p className="text-body">Use the roll app</p>
+            <Button variant="ghost" onClick={logout}>Sign out</Button>
           </>
         )}
       </section>
