@@ -95,7 +95,7 @@ bun install
 bun test server && bun run typecheck && bun run lint
 ```
 
-`scripts/deploy.sh` tests, builds and ships to the server.
+A merge to `main` deploys itself: the pull request builds the bundle (`deploy/release.Dockerfile`), and land ships it to the roll CT, where carrel-deployd runs `deploy/carrel-start.sh`.
 
 ## License
 
