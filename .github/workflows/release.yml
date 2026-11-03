@@ -1,0 +1,23 @@
+name: release
+
+# A push to main deploys the bundle ci passed to the roll CT on enderchest
+# through land: carrel-deployd there unpacks it and runs deploy/carrel-start.sh.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  ship:
+    uses: zyx1121/.github/.github/workflows/ship.yml@main
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+      id-token: write
+    with:
+      images: '["ghcr.io/zyx1121/roll"]'
+      bundle: ghcr.io/zyx1121/roll
+      files: deploy/carrel-start.sh
+      target: land
+      tenant: enderchest
+      app: roll

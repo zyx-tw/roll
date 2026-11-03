@@ -19,3 +19,20 @@ jobs:
       - run: bun run typecheck
       - run: bun run lint
       - run: bun run build
+  image:
+    uses: zyx1121/.github/.github/workflows/image.yml@main
+    permissions:
+      contents: read
+      packages: write
+    with:
+      images: '[{"name": "ghcr.io/zyx1121/roll", "file": "deploy/release.Dockerfile"}]'
+      smoke: bash deploy/smoke.sh
+
+  promote:
+    needs: [check, image]
+    uses: zyx1121/.github/.github/workflows/promote.yml@main
+    permissions:
+      contents: read
+      packages: write
+    with:
+      images: '["ghcr.io/zyx1121/roll"]'
