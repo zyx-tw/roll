@@ -1,4 +1,4 @@
-// The embed service (zyx1121/embed): EmbeddingGemma 2 vectors for photos and
+// The embed service (zyx-tw/embed): EmbeddingGemma 2 vectors for photos and
 // queries, and the text in a photo. It keeps nothing; roll stores the results.
 import type { Config } from "./config"
 

@@ -2,9 +2,9 @@
 
 ## Layout
 
-- `server/`: the Bun server. `app.ts` routes, `auth.ts` does passkeys, sessions and invites, `library.ts` scans originals and makes previews, `photos.ts` the timeline and media API, `search.ts` date queries, `places.ts` GPS to towns, `smart.ts` search by meaning and text in photos (through `embed.ts`, the zyx1121/embed client), `faces.ts` faces and named people, `albums.ts` albums, `upload.ts` uploads, `paths.ts` path safety.
+- `server/`: the Bun server. `app.ts` routes, `auth.ts` does passkeys, sessions and invites, `library.ts` scans originals and makes previews, `photos.ts` the timeline and media API, `search.ts` date queries, `places.ts` GPS to towns, `smart.ts` search by meaning and text in photos (through `embed.ts`, the zyx-tw/embed client), `faces.ts` faces and named people, `albums.ts` albums, `upload.ts` uploads, `paths.ts` path safety.
 - `src/`: the React app (`roll.tsx`). The shell and `components/ui` come from the task-web starter and ui.zyx.tw; do not edit `components/ui`.
-- `deploy/`: the release bundle, its smoke test, the start script land runs, the unit hardening and the env file shape. A merge to `main` deploys through land; wait with `golem-watch zyx1121/roll <sha>`.
+- `deploy/`: the release bundle, its smoke test, the start script land runs, the unit hardening and the env file shape. A merge to `main` deploys through land; wait with `golem-watch zyx-tw/roll <sha>`.
 
 ## Rules
 

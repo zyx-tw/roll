@@ -15,7 +15,7 @@ export type Config = {
   iosApps: string[]
   appAttestDevelopment: boolean
   vaapi: string | null
-  // The embed service (zyx1121/embed) for search by meaning and text in photos; null turns it off.
+  // The embed service (zyx-tw/embed) for search by meaning and text in photos; null turns it off.
   embedUrl: string | null
   embedToken: string
 }

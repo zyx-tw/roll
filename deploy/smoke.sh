@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The release bundle as deployed: copy /release out of the image and run it
 # with the same Bun the CT has (vips, ffmpeg and exiftool are not needed to start). ci runs it with the image loaded as
-# ghcr.io/zyx1121/roll:ci.
+# ghcr.io/zyx-tw/roll:ci.
 set -euo pipefail
-image=${1:-ghcr.io/zyx1121/roll:ci}
+image=${1:-ghcr.io/zyx-tw/roll:ci}
 dir=$(mktemp -d)
 cid=$(docker create "$image" /none)
 docker cp "$cid:/release/." "$dir/"
