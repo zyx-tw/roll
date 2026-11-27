@@ -15,8 +15,8 @@ jobs:
       actions: read
       id-token: write
     with:
-      images: '["ghcr.io/zyx1121/roll"]'
-      bundle: ghcr.io/zyx1121/roll
+      images: '["ghcr.io/zyx-tw/roll"]'
+      bundle: ghcr.io/zyx-tw/roll
       files: deploy/carrel-start.sh
       target: land
       tenant: enderchest

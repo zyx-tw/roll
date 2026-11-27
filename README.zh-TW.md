@@ -67,7 +67,7 @@ bun run start
 ## 開發
 
 ```sh
-git clone https://github.com/zyx1121/roll && cd roll
+git clone https://github.com/zyx-tw/roll && cd roll
 bun install
 bun test server && bun run typecheck && bun run lint
 ```

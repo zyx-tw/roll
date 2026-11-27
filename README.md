@@ -56,7 +56,7 @@ Open the printed link and register a passkey, then sign in from the iOS app. Cop
 | `ROLL_WORKERS` | previews made at once | `2` |
 | `ROLL_GEONAMES` | GeoNames `cities1000.txt`, for town names | `<ROLL_DATA>/geo/cities1000.txt` |
 | `ROLL_RESERVE_GB` | disk space an upload must leave free | `10` |
-| `ROLL_EMBED_URL` | the zyx1121/embed service, for search by meaning and text in photos | off |
+| `ROLL_EMBED_URL` | the zyx-tw/embed service, for search by meaning and text in photos | off |
 | `ROLL_EMBED_TOKEN` | its bearer token | none |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | where OTLP/HTTP JSON logs go | off |
 
@@ -90,7 +90,7 @@ Facts for coding agents and LLM tools. The rules for changing the code are in [A
 ## Development
 
 ```sh
-git clone https://github.com/zyx1121/roll && cd roll
+git clone https://github.com/zyx-tw/roll && cd roll
 bun install
 bun test server && bun run typecheck && bun run lint
 ```
