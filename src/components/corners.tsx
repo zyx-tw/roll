@@ -119,6 +119,7 @@ export function TopCorners({
   label = "zyx.tw",
   markTip = home.startsWith("/") ? "Home" : new URL(home).host,
   nav,
+  crumb,
   fade = false,
   className,
 }: {
@@ -127,6 +128,8 @@ export function TopCorners({
   label?: string
   markTip?: React.ReactNode
   nav?: React.ReactNode
+  /** The site's name after the mark, as a breadcrumb; a string is set in capitals. */
+  crumb?: React.ReactNode
   fade?: boolean
   /** On each corner, e.g. an entrance animation or a theme scope. */
   className?: string
@@ -134,7 +137,7 @@ export function TopCorners({
   return (
     <header>
       {fade && <EdgeFade edge="top" />}
-      <Corner at="top-left" className={className}>
+      <Corner at="top-left" className={cn(crumb ? "gap-2" : undefined, className)}>
         <CornerTip tip={markTip}>
           <a
             href={home}
@@ -145,6 +148,19 @@ export function TopCorners({
             <ZyxMark className="h-5 w-auto group-hover:-scale-x-100 motion-safe:transition-transform motion-safe:duration-overlay" />
           </a>
         </CornerTip>
+        {crumb &&
+          (typeof crumb === "string" ? (
+            <p className="flex min-w-0 gap-2">
+              <span aria-hidden="true" className="text-muted-foreground">
+                /
+              </span>
+              <span aria-current="page" className="truncate uppercase">
+                {crumb}
+              </span>
+            </p>
+          ) : (
+            crumb
+          ))}
       </Corner>
       {nav && (
         <Corner at="top-right" className={className}>
