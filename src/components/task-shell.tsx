@@ -22,7 +22,7 @@ export function TaskShell({ title, description, actions, children, wide = false,
       <a href="#task" className="fixed top-5 left-20 z-60 -translate-y-24 rounded-control bg-background px-3 py-2 text-body focus:translate-y-0">
         {chinese ? "跳至主要內容" : "Skip to content"}
       </a>
-      <TopCorners fade nav={actions && <nav aria-label={chinese ? "任務操作" : "Task actions"} className="flex max-w-[calc(100vw-6.25rem)] items-center gap-4">{actions}</nav>} />
+      <TopCorners fade crumb="roll" nav={actions && <nav aria-label={chinese ? "任務操作" : "Task actions"} className="flex max-w-[calc(100vw-6.25rem)] items-center gap-4">{actions}</nav>} />
       <main id="task" tabIndex={-1} className={cn("mx-auto min-h-svh w-full px-5 outline-none", showTitle ? "pt-30" : "pt-20", bottomCorners ? "pb-25" : "pb-5", wide ? "max-w-6xl" : "max-w-xl lg:max-w-3xl 2xl:max-w-5xl")}>
         <div className={showTitle ? "mb-10" : "sr-only"}>
           <h1 className="text-title font-medium">{title}</h1>
