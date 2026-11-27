@@ -10,16 +10,16 @@ export { CornerTip }
 /*
  * The frame every zyx.tw site shares: the logo top left, the page nav top
  * right, secondary links bottom left and the copyright bottom right. Each
- * corner is fixed 20px in from the viewport's corner. All corners use
+ * corner is fixed 12px in from the viewport's corner. All corners use
  * text-body (16px on 24px lines). An item in a corner
  * can carry a tip (`CornerTip`), which opens toward the page.
  */
 
 const AT: Record<At, string> = {
-  "top-left": "top-5 left-5",
-  "top-right": "top-5 right-5",
-  "bottom-left": "bottom-5 left-5",
-  "bottom-right": "right-5 bottom-5",
+  "top-left": "top-3 left-3",
+  "top-right": "top-3 right-3",
+  "bottom-left": "bottom-3 left-3",
+  "bottom-right": "right-3 bottom-3",
 }
 
 /**
