@@ -1,5 +1,3 @@
-"use client"
-
 import * as React from "react"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { cva, type VariantProps } from "class-variance-authority"
@@ -7,6 +5,7 @@ import { XIcon } from "lucide-react"
 
 import { cn } from "../../lib/utils"
 import { Button } from "./button"
+import { FrameEdges } from "./frame"
 
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
@@ -42,7 +41,7 @@ function DialogOverlay({
 
 // Two widths replace the per-page pixel width overrides apps used before.
 const dialogContentVariants = cva(
-  "fixed inset-x-4 top-1/2 z-50 mx-auto flex max-h-11/12 -translate-y-1/2 flex-col gap-6 overflow-y-auto rounded-surface border border-border bg-overlay p-6 text-body text-foreground shadow-lg backdrop-blur-md duration-overlay outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+  "fixed inset-x-4 top-1/2 z-50 mx-auto flex max-h-11/12 -translate-y-1/2 flex-col rounded-control bg-background/80 text-body text-foreground shadow-window backdrop-blur-md duration-overlay outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-96 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-96",
   {
     variants: {
       size: {
@@ -74,7 +73,11 @@ function DialogContent({
         className={cn(dialogContentVariants({ size }), className)}
         {...props}
       >
-        {children}
+        {/* The box inside scrolls, so the frame stays on the popup's edge. */}
+        <div className="flex min-h-0 flex-col gap-6 overflow-y-auto p-6">
+          {children}
+        </div>
+        <FrameEdges />
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"

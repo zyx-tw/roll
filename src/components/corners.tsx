@@ -1,5 +1,3 @@
-import type * as React from "react"
-
 import { type At, CornerScope, CornerTip } from "./corner-tip"
 import { ZyxMark } from "./zyx-mark"
 
@@ -10,56 +8,73 @@ export { CornerTip }
 /*
  * The frame every zyx.tw site shares: the logo top left, the page nav top
  * right, secondary links bottom left and the copyright bottom right. Each
- * corner is fixed 12px in from the viewport's corner. All corners use
+ * corner is fixed 12px (`--gutter`) in from the viewport's corner, or from the screen's
+ * when the site wears the TV frame (`tv` on <html>). All corners use
  * text-body (16px on 24px lines). An item in a corner
  * can carry a tip (`CornerTip`), which opens toward the page.
  */
 
 const AT: Record<At, string> = {
-  "top-left": "top-3 left-3",
-  "top-right": "top-3 right-3",
-  "bottom-left": "bottom-3 left-3",
-  "bottom-right": "right-3 bottom-3",
+  "top-left": "corner-top corner-left",
+  "top-right": "corner-top corner-right",
+  "bottom-left": "corner-bottom corner-left",
+  "bottom-right": "corner-right corner-bottom",
 }
 
 /**
- * Text links in a corner: muted, lit on hover and for the current page. The
- * hit area reaches 8 px past the text on either side and stays 24 px tall
- * for both header and footer text, centered on the text line.
+ * Text links in a corner: uppercase like a terminal menu, muted, lit on hover
+ * and for the current page. The hit area reaches 8 px past the text on either
+ * side and stays 24 px tall for both header and footer text, centered on the
+ * text line.
  */
 export const cornerLink =
-  "relative rounded-control text-muted-foreground outline-offset-4 transition-colors after:absolute after:-inset-x-2 after:top-1/2 after:h-6 after:-translate-y-1/2 hover:text-foreground focus-visible:outline-2 aria-[current=page]:text-foreground"
+  "[font-variant-ligatures:none] relative uppercase text-muted-foreground outline-offset-4 transition-colors after:absolute after:-inset-x-2 after:top-1/2 after:h-6 after:-translate-y-1/2 hover:text-foreground focus-visible:outline-2 aria-[current=page]:text-foreground"
 
-/** The tips on Privacy and Terms, which www.zyx.tw's own links share. */
-export const LEGAL_TIPS = {
-  privacy: "What every zyx.tw site stores and logs",
-  terms: "The rules for every zyx.tw site",
+/**
+ * A nav label in brackets, as in a terminal menu: the brackets show on the
+ * current page only. They hang outside the label, so the label's own text
+ * lines up with the corner's edge and nothing shifts on navigation; a nav of
+ * these takes `gap-7`, room for a bracket on either side of the gap.
+ */
+export function CornerLabel({
+  current = false,
+  children,
+}: {
+  current?: boolean
+  children: React.ReactNode
+}) {
+  const bracket = current ? undefined : "invisible"
+  return (
+    <span className="relative">
+      <span aria-hidden="true" className={cn("absolute right-full", bracket)}>
+        [
+      </span>
+      {children}
+      <span aria-hidden="true" className={cn("absolute left-full", bracket)}>
+        ]
+      </span>
+    </span>
+  )
 }
 
 /**
  * Privacy and Terms, which every zyx.tw site shares at www.zyx.tw. They lead
- * the bottom left corner; the labels and their tips follow the site's
+ * the bottom left corner; the labels follow the site's
  * language.
  */
 export function LegalLinks({
   labels = { privacy: "Privacy", terms: "Terms" },
-  tips = LEGAL_TIPS,
 }: {
   labels?: { privacy: string; terms: string }
-  tips?: { privacy: string; terms: string }
 }) {
   return (
     <>
-      <CornerTip tip={tips.privacy}>
-        <a href="https://www.zyx.tw/privacy" className={cornerLink}>
-          {labels.privacy}
-        </a>
-      </CornerTip>
-      <CornerTip tip={tips.terms}>
-        <a href="https://www.zyx.tw/terms" className={cornerLink}>
-          {labels.terms}
-        </a>
-      </CornerTip>
+      <a href="https://www.zyx.tw/privacy" className={cornerLink}>
+        {labels.privacy}
+      </a>
+      <a href="https://www.zyx.tw/terms" className={cornerLink}>
+        {labels.terms}
+      </a>
     </>
   )
 }
@@ -109,17 +124,57 @@ function EdgeFade({ edge }: { edge: "top" | "bottom" }) {
  * elements are placed in, which pulls the corners off the viewport's.
  */
 
+/** One step of the path to the current page; the last one has no `href`. */
+export type Crumb = { label: string; href?: string }
+
 /**
- * The top corners: the zyx mark, which mirrors itself on hover, and the page
- * nav. The mark links to `home`: "/" on www.zyx.tw, www.zyx.tw everywhere
- * else. Its tip says where: "Home" or the host.
+ * The path from the mark to the current page, as a shell prints one:
+ * `/ WORKS / AINTERN`. Every step but the last is a link. On a phone only
+ * the last step shows, and it truncates rather than reach the page nav.
+ */
+function Trail({ trail }: { trail: Crumb[] }) {
+  return (
+    <nav aria-label="Breadcrumb" className="min-w-0 max-sm:hidden">
+      <ol className="flex gap-2">
+        {trail.map(({ label, href }, index) => {
+          const last = index === trail.length - 1
+          return (
+            <li
+              key={label}
+              className={cn("flex gap-2", last ? "min-w-0" : "max-sm:hidden")}
+            >
+              <span aria-hidden="true" className="text-muted-foreground">
+                /
+              </span>
+              {href && !last ? (
+                <a href={href} className={cornerLink}>
+                  {label}
+                </a>
+              ) : (
+                <span aria-current="page" className="truncate uppercase">
+                  {label}
+                </span>
+              )}
+            </li>
+          )
+        })}
+      </ol>
+    </nav>
+  )
+}
+
+/**
+ * The top corners: the zyx mark, which mirrors itself on hover, the path to
+ * the current page beside it, and the page nav. The mark links to `home`:
+ * "/" on www.zyx.tw, www.zyx.tw everywhere else. Its tip says where: "Home"
+ * or the host.
  */
 export function TopCorners({
   home = "https://www.zyx.tw",
   label = "zyx.tw",
   markTip = home.startsWith("/") ? "Home" : new URL(home).host,
+  trail,
   nav,
-  crumb,
   fade = false,
   className,
 }: {
@@ -127,9 +182,9 @@ export function TopCorners({
   /** The mark's accessible name. */
   label?: string
   markTip?: React.ReactNode
+  /** The steps from the home page to this one; none on the home page. */
+  trail?: Crumb[]
   nav?: React.ReactNode
-  /** The site's name after the mark, as a breadcrumb; a string is set in capitals. */
-  crumb?: React.ReactNode
   fade?: boolean
   /** On each corner, e.g. an entrance animation or a theme scope. */
   className?: string
@@ -137,30 +192,24 @@ export function TopCorners({
   return (
     <header>
       {fade && <EdgeFade edge="top" />}
-      <Corner at="top-left" className={cn(crumb ? "gap-2" : undefined, className)}>
+      {/* With a trail the corner ends 288px from the right edge, clear of a
+          four-item nav, so a long name truncates instead of running into it.
+          A phone has no room for both: there the nav marks the page. */}
+      <Corner
+        at="top-left"
+        className={cn(trail?.length && "gap-2 sm:right-72", className)}
+      >
         <CornerTip tip={markTip}>
           <a
             href={home}
             aria-label={label}
-            className="group rounded-control outline-offset-4 focus-visible:outline-2"
+            className="group shrink-0 outline-offset-4 focus-visible:outline-2"
           >
             {/* 20 px tall, the corners' line height. */}
             <ZyxMark className="h-5 w-auto group-hover:-scale-x-100 motion-safe:transition-transform motion-safe:duration-overlay" />
           </a>
         </CornerTip>
-        {crumb &&
-          (typeof crumb === "string" ? (
-            <p className="flex min-w-0 gap-2">
-              <span aria-hidden="true" className="text-muted-foreground">
-                /
-              </span>
-              <span aria-current="page" className="truncate uppercase">
-                {crumb}
-              </span>
-            </p>
-          ) : (
-            crumb
-          ))}
+        {trail && trail.length > 0 && <Trail trail={trail} />}
       </Corner>
       {nav && (
         <Corner at="top-right" className={className}>

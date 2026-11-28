@@ -1,8 +1,11 @@
+"use client"
+
 import * as React from "react"
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog"
 
 import { cn } from "../../lib/utils"
 import { Button } from "./button"
+import { FrameEdges } from "./frame"
 
 function AlertDialog({ ...props }: AlertDialogPrimitive.Root.Props) {
   return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
@@ -39,6 +42,7 @@ function AlertDialogOverlay({
 // A confirmation: title, description, then Cancel and the action.
 function AlertDialogContent({
   className,
+  children,
   ...props
 }: AlertDialogPrimitive.Popup.Props) {
   return (
@@ -47,11 +51,14 @@ function AlertDialogContent({
       <AlertDialogPrimitive.Popup
         data-slot="alert-dialog-content"
         className={cn(
-          "fixed inset-x-4 top-1/2 z-50 mx-auto flex max-w-md -translate-y-1/2 flex-col gap-6 rounded-surface border border-border bg-overlay p-6 text-body text-foreground shadow-lg backdrop-blur-md duration-overlay outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed inset-x-4 top-1/2 z-50 mx-auto flex max-w-md -translate-y-1/2 flex-col gap-6 rounded-control bg-background/80 p-6 text-body text-foreground shadow-window backdrop-blur-md duration-overlay outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-96 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-96",
           className
         )}
         {...props}
-      />
+      >
+        {children}
+        <FrameEdges />
+      </AlertDialogPrimitive.Popup>
     </AlertDialogPortal>
   )
 }

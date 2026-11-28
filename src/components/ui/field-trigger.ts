@@ -1,2 +1,8 @@
 export const fieldTriggerClassName =
-  "flex h-10 w-fit items-center justify-between gap-2 rounded-control border border-input bg-transparent px-3 text-body whitespace-nowrap transition-colors outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-placeholder:text-muted-foreground dark:bg-input/30 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0"
+  "group/field relative flex h-10 w-fit rounded-control items-center justify-between gap-2 bg-transparent px-3 text-body whitespace-nowrap transition-colors outline-none select-none disabled:cursor-not-allowed disabled:opacity-50 data-placeholder:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0"
+
+// A field's frame: the input line color at rest, the text color in focus,
+// red when invalid. The frame's parent is the field (group/field): a trigger itself, or
+// the box around an input.
+export const fieldFrameClassName =
+  "text-input transition duration-state group-focus-visible/field:text-ring group-has-focus-visible/field:text-ring group-aria-invalid/field:text-destructive group-has-aria-invalid/field:text-destructive"
