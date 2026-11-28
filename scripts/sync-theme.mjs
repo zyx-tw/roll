@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 // The tokens come from the ui.zyx.tw base item; the corner fade comes from the
 // corners item, whose component this starter keeps as a portable copy.
 const registry = 'https://ui.zyx.tw/r';
-const items = ['base', 'corners'];
+const items = ['base','corners','frame','layout','spinner'];
 const root = new URL('../', import.meta.url);
 
 function rule(selector, value) {
@@ -37,11 +37,11 @@ export function renderTheme(base, extra = []) {
     }
   }
   return [
-    '/* Generated from https://ui.zyx.tw/r/base.json and corners.json. Run npm run theme:sync. */',
+    `/* Generated from https://ui.zyx.tw/r/: ${items.join(', ')}. Run npm run theme:sync. */`,
     ...imports,
     rule('@theme inline', { ...vars(theme), ...Object.fromEntries(colors.map(key => [`--color-${key}`, `var(--${key})`])) }),
     rule(':root', vars(light)),
-    rule('.dark', vars(dark)),
+    ...(Object.keys(dark).length ? [rule('.dark', vars(dark))] : []),
     ...rules,
   ].join('\n\n') + '\n';
 }

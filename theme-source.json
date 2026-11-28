@@ -1,10 +1,22 @@
 [
   {
     "source": "https://ui.zyx.tw/r/base.json",
-    "sha256": "fe8f919ab9e42a70ff80e87624db421ace6baa74b5c36338a0636190c420e308"
+    "sha256": "2982fc465cf7e0f14f7d42f7854b57fcdf5d6530adf89c892bb27bb5aa6978af"
   },
   {
     "source": "https://ui.zyx.tw/r/corners.json",
-    "sha256": "28f19e78e4b6f2b2200e2db9b8e3e385f467349b195e959de7b943b629827d80"
+    "sha256": "2e8a4da043e8878897eeea35828dc00bfb16065e41e73288c6fa3311195916d9"
+  },
+  {
+    "source": "https://ui.zyx.tw/r/frame.json",
+    "sha256": "92bce7905c4958a82d6e604560e8496436efb82e03a5357f1cfa43f0e96fd196"
+  },
+  {
+    "source": "https://ui.zyx.tw/r/layout.json",
+    "sha256": "8a1ca8fcdccf36a35d969638943d93041e372d9a4a057c35d051bd91ba0ec13d"
+  },
+  {
+    "source": "https://ui.zyx.tw/r/spinner.json",
+    "sha256": "3b8e7bfb9aa5ae2cfad91a70f12ef37d5b14433813fc65d1c3f463f76331a53f"
   }
 ]
